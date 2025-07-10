@@ -24,7 +24,7 @@ class GenerateResponse(BaseModel):
     error: Optional[str] = None
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate_readme(request: GenerateRequest):
+def generate_readme(request: GenerateRequest):
     """
     Generate a README for a GitHub repository
     """
@@ -32,7 +32,7 @@ async def generate_readme(request: GenerateRequest):
         logger.info(f"Received request to generate README for: {request.repo_url}")
         
         # Call the service to generate the README
-        result = await generate_readme_for_repo(
+        result = generate_readme_for_repo(
             repo_url=str(request.repo_url),
             tone=request.tone
         )
@@ -43,7 +43,7 @@ async def generate_readme(request: GenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/health")
-async def health_check():
+def health_check():
     """
     Health check endpoint
     """

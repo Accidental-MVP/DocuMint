@@ -49,13 +49,14 @@ documint/
    pip install -r requirements.txt
    ```
 
-4. Create a `.env` file in the backend directory with:
+4. Create a `.env` file in the backend directory by copying the example:
    ```
-   OPENAI_API_KEY=your_openai_api_key_here
-   GITHUB_TEMP_DIR=./temp_repos
+   copy env.example .env  # On Unix: cp env.example .env
    ```
 
-5. Run the FastAPI server:
+5. Edit the `.env` file to add your OpenAI API key.
+
+6. Run the FastAPI server:
    ```
    python -m app.main
    ```
@@ -81,6 +82,24 @@ documint/
 
 - `POST /api/generate` - Generate a README for a GitHub repository
 - `GET /api/health` - Health check endpoint
+
+## Development Notes
+
+### Environment Variables
+
+The project uses environment variables for configuration. These are stored in `.env` files which are not committed to the repository for security reasons.
+
+- Backend: Copy `backend/env.example` to `backend/.env` and fill in your API keys
+- Frontend: Create a `.env.local` file in the frontend directory if needed
+
+### Git Ignore
+
+The `.gitignore` file is set up to exclude:
+- Environment files (`.env`, `.env.local`, etc.)
+- Python cache and virtual environments
+- Node.js modules and build artifacts
+- Temporary repository storage
+- IDE files and logs
 
 ## License
 

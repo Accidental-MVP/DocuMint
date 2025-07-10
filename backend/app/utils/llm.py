@@ -4,9 +4,9 @@ from ..config import OPENAI_API_KEY, DEFAULT_MODEL, DEFAULT_TEMPERATURE, DEFAULT
 # Configure OpenAI API key
 openai.api_key = OPENAI_API_KEY
 
-async def generate_readme(prompt: str, model: str = DEFAULT_MODEL, 
-                          temperature: float = DEFAULT_TEMPERATURE,
-                          max_tokens: int = DEFAULT_MAX_TOKENS):
+def generate_readme(prompt: str, model: str = DEFAULT_MODEL, 
+                    temperature: float = DEFAULT_TEMPERATURE,
+                    max_tokens: int = DEFAULT_MAX_TOKENS):
     """
     Generate README content using OpenAI API
     
@@ -24,7 +24,8 @@ async def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
             # Return mock response for testing without API key
             return _get_mock_readme()
             
-        response = await openai.chat.completions.create(
+        # Use the OpenAI API in synchronous mode with v0.28.1
+        response = openai.ChatCompletion.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a technical writer specializing in creating clear, concise README files for GitHub repositories."},
@@ -34,7 +35,7 @@ async def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
             max_tokens=max_tokens
         )
         
-        return response.choices[0].message.content
+        return response.choices[0].message['content']
     except Exception as e:
         print(f"Error calling OpenAI API: {e}")
         # Fallback to mock response in case of errors

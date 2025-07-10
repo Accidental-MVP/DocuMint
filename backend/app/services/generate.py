@@ -9,8 +9,8 @@ from ..config import DEFAULT_REPO_URL
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL, 
-                                  tone: str = "professional") -> Dict:
+def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL, 
+                            tone: str = "professional") -> Dict:
     """
     Generate a README for a GitHub repository
     
@@ -35,7 +35,7 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         prompt = _build_prompt(repo_url, important_files, tone)
         
         # Generate README using LLM
-        readme_content = await generate_readme(prompt)
+        readme_content = generate_readme(prompt)
         
         return {
             "success": True,

@@ -6,6 +6,7 @@ import tempfile
 import logging
 from typing import Dict, List, Tuple
 import glob
+import stat
 
 from ..config import GITHUB_TEMP_DIR
 from .chunker import FileChunker, chunk_repository_files
@@ -222,6 +223,25 @@ def get_chunked_repository_content(repo_path: str, max_files: int = 5) -> List[D
     
     return chunks
 
+def handle_readonly_files(func, path, exc_info):
+    """
+    Error handler for shutil.rmtree to handle read-only files
+    
+    Args:
+        func: Function that raised the exception
+        path: Path to the file
+        exc_info: Exception information
+    """
+    # Check if the error is due to read-only files
+    if not os.access(path, os.W_OK):
+        # Change file permissions
+        os.chmod(path, stat.S_IWUSR)
+        # Try again
+        func(path)
+    else:
+        # If it's not a permission error, re-raise the exception
+        raise
+
 def cleanup_repository(repo_path: str) -> None:
     """
     Clean up a cloned repository
@@ -231,7 +251,33 @@ def cleanup_repository(repo_path: str) -> None:
     """
     try:
         if os.path.exists(repo_path):
-            shutil.rmtree(repo_path)
+            # Use error handler for read-only files
+            shutil.rmtree(repo_path, onerror=handle_readonly_files)
             logger.info(f"Cleaned up repository: {repo_path}")
     except Exception as e:
         logger.error(f"Error cleaning up repository: {e}")
+        # Try to remove as many files as possible
+        try:
+            for root, dirs, files in os.walk(repo_path, topdown=False):
+                for name in files:
+                    try:
+                        file_path = os.path.join(root, name)
+                        os.chmod(file_path, stat.S_IWUSR)
+                        os.remove(file_path)
+                    except:
+                        pass
+                for name in dirs:
+                    try:
+                        dir_path = os.path.join(root, name)
+                        os.rmdir(dir_path)
+                    except:
+                        pass
+            # Try to remove the main directory
+            try:
+                os.rmdir(repo_path)
+            except:
+                pass
+            logger.info(f"Partially cleaned up repository: {repo_path}")
+        except Exception as e2:
+            logger.error(f"Failed to partially clean up repository: {e2}")
+            # Just log the error and continue - we'll rely on periodic cleanup

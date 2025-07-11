@@ -8,7 +8,8 @@ from ..models.readme import (
     GenerateRequest, GenerateResponse, 
     ModelInfo, ModeInfo, 
     ModelsResponse, ModesResponse,
-    ReadmeTone, GenerationMode
+    ReadmeTone, GenerationMode,
+    FilePreview, ProcessingMetadata
 )
 
 # Set up logging
@@ -45,7 +46,40 @@ def generate_readme(request: GenerateRequest):
             max_files=request.max_files
         )
         
-        return result
+        # Extract file preview and processing metadata if available
+        file_preview = None
+        processing_metadata = None
+        
+        if result["success"] and "metadata" in result:
+            # Extract file preview
+            if "file_preview" in result["metadata"]:
+                file_preview = [
+                    FilePreview(path=item["path"], preview=item["preview"])
+                    for item in result["metadata"]["file_preview"]
+                ]
+            
+            # Extract processing metadata
+            if "processing" in result["metadata"]:
+                proc_data = result["metadata"]["processing"]
+                processing_metadata = ProcessingMetadata(
+                    total_prompt_tokens=proc_data.get("total_prompt_tokens", 0),
+                    total_completion_tokens=proc_data.get("total_completion_tokens", 0),
+                    total_tokens=proc_data.get("total_tokens", 0),
+                    chunk_errors=proc_data.get("chunk_errors", 0),
+                    error_details=proc_data.get("error_details")
+                )
+        
+        # Create response
+        response = GenerateResponse(
+            success=result["success"],
+            readme=result["readme"],
+            metadata=result.get("metadata"),
+            error=result.get("error"),
+            file_preview=file_preview,
+            processing_metadata=processing_metadata
+        )
+        
+        return response
     except Exception as e:
         logger.error(f"Error in generate endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))

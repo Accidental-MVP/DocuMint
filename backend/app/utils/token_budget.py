@@ -8,10 +8,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Token estimation constants
-CHARS_PER_TOKEN = 4  # Rough estimate: 1 token ≈ 4 characters
-MAX_TOKENS_PER_REQUEST = 8192  # OpenAI's context window limit for GPT-4
-PROMPT_OVERHEAD = 1000  # Reserved for prompts, instructions, and overhead
-MAX_SAFE_FILES = 20  # Maximum number of files we'll process regardless of budget
+CHARS_PER_TOKEN = 4.5  # Increased from 4 to 4.5 for less conservative estimation
+MAX_TOKENS_PER_REQUEST = 16000  # Increased from 8192 to account for newer models
+PROMPT_OVERHEAD = 800  # Reduced from 1000 to allow more content
+MAX_SAFE_FILES = 25  # Increased from 20 to allow more files
+
+# Minimum number of important files to include regardless of token budget
+MIN_FILES_TO_INCLUDE = 3
 
 def count_files_in_repo(repo_path: str) -> int:
     """
@@ -46,12 +49,13 @@ def estimate_tokens_for_file(file_path: str) -> int:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         
-        # Rough estimate: 1 token ≈ 4 characters
+        # More accurate token estimation for code files
+        # Code tends to use fewer tokens than natural language
         return math.ceil(len(content) / CHARS_PER_TOKEN)
     except Exception as e:
         logger.warning(f"Error estimating tokens for {file_path}: {e}")
         # Return a conservative estimate for files we can't read
-        return 1000  # Assume ~1K tokens for files we can't read
+        return 500  # Reduced from 1000 to be less conservative
 
 def calculate_dynamic_max_files(repo_path: str) -> int:
     """
@@ -109,7 +113,20 @@ def select_files_with_budget(
     selected_files = []
     tokens_used = 0
     
-    for file_info in sorted_files:
+    # First, include the most important files up to MIN_FILES_TO_INCLUDE
+    # regardless of token budget (to ensure we have at least some content)
+    min_files_to_process = min(MIN_FILES_TO_INCLUDE, len(sorted_files))
+    for i in range(min_files_to_process):
+        if i < len(sorted_files):
+            file_info = sorted_files[i]
+            file_path = os.path.join(repo_path, file_info["path"])
+            file_tokens = estimate_tokens_for_file(file_path)
+            selected_files.append(file_info["path"])
+            tokens_used += file_tokens
+            logger.info(f"Including essential file {file_info['path']} with {file_tokens} tokens")
+    
+    # Then process remaining files within budget
+    for file_info in sorted_files[min_files_to_process:]:
         file_path = os.path.join(repo_path, file_info["path"])
         
         # Estimate tokens for this file
@@ -117,12 +134,7 @@ def select_files_with_budget(
         
         # Check if adding this file would exceed our budget
         if tokens_used + file_tokens > max_token_budget:
-            # If we haven't selected any files yet, take at least one
-            if not selected_files:
-                selected_files.append(file_info["path"])
-                tokens_used += file_tokens
-            # Otherwise, skip this file
-            logger.info(f"Skipping {file_info['path']} - would exceed token budget")
+            logger.info(f"Skipping {file_info['path']} - would exceed token budget (est. {file_tokens} tokens)")
             continue
             
         # Check if we've reached our file count limit
@@ -133,6 +145,7 @@ def select_files_with_budget(
         # Add file to selected files
         selected_files.append(file_info["path"])
         tokens_used += file_tokens
+        logger.info(f"Including {file_info['path']} with {file_tokens} tokens")
         
     logger.info(f"Selected {len(selected_files)} files with estimated {tokens_used} tokens")
     return selected_files, tokens_used 

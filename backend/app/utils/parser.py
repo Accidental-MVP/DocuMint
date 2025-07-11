@@ -10,7 +10,7 @@ import stat
 from pygments.lexers import guess_lexer, guess_lexer_for_filename
 from pygments.util import ClassNotFound
 import git
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..config import GITHUB_TEMP_DIR
 from .chunker import FileChunker, chunk_repository_files
@@ -91,16 +91,18 @@ def analyze_git_history(repo_path: str, max_commits: int = 100) -> Dict:
         
         # Calculate commit frequency
         if len(commits) > 1:
-            first_commit_date = commits[-1].committed_datetime
-            last_commit_date = commits[0].committed_datetime
+            # Ensure both dates are timezone-aware for comparison
+            first_commit_date = ensure_timezone_aware(commits[-1].committed_datetime)
+            last_commit_date = ensure_timezone_aware(commits[0].committed_datetime)
+            
             days_diff = (last_commit_date - first_commit_date).days or 1  # Avoid division by zero
             commits_per_day = len(commits) / days_diff
         else:
             commits_per_day = 0
         
         # Get recent activity (last 30 days)
-        thirty_days_ago = datetime.now() - timedelta(days=30)
-        recent_commits = [c for c in commits if c.committed_datetime > thirty_days_ago]
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        recent_commits = [c for c in commits if ensure_timezone_aware(c.committed_datetime) > thirty_days_ago]
         
         # Get contributor information
         contributors = {}
@@ -136,8 +138,8 @@ def analyze_git_history(repo_path: str, max_commits: int = 100) -> Dict:
             "total_contributors": len(contributors),
             "top_contributors": sorted(contributors.items(), key=lambda x: x[1], reverse=True)[:5],
             "most_changed_files": most_changed_files,
-            "last_commit_date": commits[0].committed_datetime.isoformat() if commits else None,
-            "first_commit_date": commits[-1].committed_datetime.isoformat() if commits else None
+            "last_commit_date": ensure_timezone_aware(commits[0].committed_datetime).isoformat() if commits else None,
+            "first_commit_date": ensure_timezone_aware(commits[-1].committed_datetime).isoformat() if commits else None
         }
     except Exception as e:
         logger.warning(f"Error analyzing git history: {e}")
@@ -148,6 +150,20 @@ def analyze_git_history(repo_path: str, max_commits: int = 100) -> Dict:
             "commits_per_day": 0,
             "total_contributors": 0
         }
+
+def ensure_timezone_aware(dt):
+    """
+    Ensure a datetime object is timezone-aware
+    
+    Args:
+        dt: Datetime object
+        
+    Returns:
+        Timezone-aware datetime object
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 def detect_language(file_path: str) -> str:
     """

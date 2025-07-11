@@ -1,8 +1,9 @@
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
-from ..utils.parser import clone_repository, get_chunked_repository_content, cleanup_repository
+from ..utils.parser import clone_repository, get_chunked_repository_content, cleanup_repository, analyze_repository
 from ..utils.reader import ContextAwareReader
+from ..utils.reader_async import AsyncContextAwareReader
 from ..utils.llm import generate_readme
 from ..config import DEFAULT_REPO_URL, AVAILABLE_MODELS, GENERATION_MODES
 
@@ -35,9 +36,16 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         logger.info(f"Starting README generation for: {repo_url}")
         repo_path = clone_repository(repo_url)
         
+        # Analyze the repository
+        repo_analysis = analyze_repository(repo_path)
+        
         # Get chunked content from important files
         logger.info("Analyzing repository and chunking files")
         chunks = get_chunked_repository_content(repo_path, client_max_files=max_files)
+        
+        # Track which files were included
+        included_files = list(set(chunk["file_path"] for chunk in chunks))
+        included_files.sort()
         
         # Process chunks with context-aware reader
         logger.info("Processing file chunks with context")
@@ -47,6 +55,9 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         # Generate repository understanding
         logger.info("Generating repository understanding")
         repo_understanding = reader.generate_repository_understanding(file_summaries)
+        
+        # Get processing metadata
+        processing_metadata = reader.get_processing_metadata()
         
         # Get model and mode settings
         model_settings = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["gpt-4"])
@@ -72,6 +83,21 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
             max_tokens=max_tokens
         )
         
+        # Create file preview information
+        file_preview = []
+        for file_path in included_files:
+            if file_path == "dummy.txt":
+                continue
+                
+            # Get file summary if available
+            summary = file_summaries.get(file_path, "")
+            preview = summary[:100] + "..." if len(summary) > 100 else summary
+            
+            file_preview.append({
+                "path": file_path,
+                "preview": preview
+            })
+        
         return {
             "success": True,
             "readme": readme_content,
@@ -81,7 +107,11 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
                 "model": model,
                 "mode": mode,
                 "files_analyzed": len(file_summaries),
-                "chunks_processed": len(chunks)
+                "chunks_processed": len(chunks),
+                "included_files": included_files,
+                "file_preview": file_preview,
+                "processing": processing_metadata,
+                "chunk_errors": processing_metadata.get("chunk_errors", 0)
             }
         }
     except Exception as e:

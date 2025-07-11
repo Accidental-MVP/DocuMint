@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Constants for context management
+MAX_CONTEXT_CHUNKS = 3  # Maximum number of previous chunks to keep in context
+MAX_CONTEXT_TOKENS = 14000  # Maximum tokens for context (leaving room for response)
+
 class ContextAwareReader:
     """
     Processes file chunks while maintaining context between chunks
@@ -18,13 +22,79 @@ class ContextAwareReader:
     
     def __init__(self, model: str = "gpt-3.5-turbo"):
         self.model = model
-        self.conversation_history = []
+        self.conversation_histories = {}
         self.summaries = {}
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.chunk_errors = []
     
     def reset(self):
-        """Reset the conversation history and summaries"""
-        self.conversation_history = []
+        """Reset the conversation histories and summaries"""
+        self.conversation_histories = {}
         self.summaries = {}
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.chunk_errors = []
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate the number of tokens in a text"""
+        # Rough estimate: 1 token ≈ 4 characters
+        return len(text) // 4
+    
+    def _manage_context_window(self, file_path: str, new_messages: List[Dict[str, str]]) -> None:
+        """
+        Manage the context window to prevent exceeding token limits
+        
+        Args:
+            file_path: Path to the file
+            new_messages: New messages to add to the conversation
+        """
+        history = self.conversation_histories[file_path]
+        
+        # Add new messages
+        history.extend(new_messages)
+        
+        # Estimate current token count
+        estimated_tokens = sum(self._estimate_tokens(msg["content"]) for msg in history)
+        
+        # If we're approaching the limit, trim the context
+        if estimated_tokens > MAX_CONTEXT_TOKENS:
+            logger.info(f"Context window for {file_path} approaching limit ({estimated_tokens} tokens). Trimming...")
+            
+            # Always keep system messages and the most recent user/assistant pairs
+            system_messages = [msg for msg in history if msg["role"] == "system"]
+            
+            # Group user and assistant messages into pairs (chunks)
+            chunks = []
+            current_chunk = []
+            
+            for msg in history:
+                if msg["role"] == "system":
+                    continue
+                    
+                current_chunk.append(msg)
+                if len(current_chunk) == 2:  # User + assistant pair
+                    chunks.append(current_chunk)
+                    current_chunk = []
+            
+            # Add any remaining messages
+            if current_chunk:
+                chunks.append(current_chunk)
+            
+            # Keep only the most recent chunks
+            recent_chunks = chunks[-MAX_CONTEXT_CHUNKS:] if len(chunks) > MAX_CONTEXT_CHUNKS else chunks
+            
+            # Flatten the chunks back into a list
+            recent_messages = []
+            for chunk in recent_chunks:
+                recent_messages.extend(chunk)
+            
+            # Update the history with system messages + recent messages
+            self.conversation_histories[file_path] = system_messages + recent_messages
+            
+            # Log the trimming
+            new_count = sum(self._estimate_tokens(msg["content"]) for msg in self.conversation_histories[file_path])
+            logger.info(f"Trimmed context window for {file_path} from {estimated_tokens} to ~{new_count} tokens")
     
     def process_chunk(self, chunk: Dict, summarize: bool = True) -> str:
         """
@@ -41,6 +111,10 @@ class ContextAwareReader:
         chunk_index = chunk["chunk_index"]
         total_chunks = chunk["total_chunks"]
         content = chunk["content"]
+        
+        # Initialize conversation history for this file if it doesn't exist
+        if file_path not in self.conversation_histories:
+            self.conversation_histories[file_path] = []
         
         # Check if this is a dummy chunk
         if file_path == "dummy.txt" and content == "No readable files found in the repository.":
@@ -80,24 +154,33 @@ Continue building your understanding of this file based on what you've seen so f
         if chunk_index == total_chunks - 1 and summarize:
             user_message += "\n\nThis is the last chunk of the file. Please provide a comprehensive summary of the entire file's purpose, structure, and key functionality."
         
-        # Add to conversation history
-        self.conversation_history.append({"role": "system", "content": system_message})
-        self.conversation_history.append({"role": "user", "content": user_message})
+        # Create new messages to add
+        new_messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
+        
+        # Manage context window before adding new messages
+        self._manage_context_window(file_path, new_messages)
         
         try:
             # Call OpenAI API
             response = client.chat.completions.create(
                 model=self.model,
-                messages=self.conversation_history,
+                messages=self.conversation_histories[file_path],
                 temperature=0.3,
                 max_tokens=1000
             )
+            
+            # Track token usage
+            self.total_prompt_tokens += response.usage.prompt_tokens
+            self.total_completion_tokens += response.usage.completion_tokens
             
             # Get the response content
             assistant_message = response.choices[0].message.content.strip()
             
             # Add to conversation history
-            self.conversation_history.append({"role": "assistant", "content": assistant_message})
+            self.conversation_histories[file_path].append({"role": "assistant", "content": assistant_message})
             
             # If this is the last chunk, save the summary
             if chunk_index == total_chunks - 1:
@@ -107,6 +190,19 @@ Continue building your understanding of this file based on what you've seen so f
             
         except Exception as e:
             logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
+            # Record the error
+            self.chunk_errors.append({
+                "file_path": file_path,
+                "chunk_index": chunk_index,
+                "error": str(e)
+            })
+            
+            # For the last chunk, ensure we have at least some summary
+            if chunk_index == total_chunks - 1:
+                if file_path not in self.summaries:
+                    # Create a simple summary from what we've seen so far
+                    self.summaries[file_path] = f"Error processing final chunk: {str(e)}. Partial understanding available from previous chunks."
+            
             return f"Error processing chunk: {str(e)}"
     
     def process_file_chunks(self, chunks: List[Dict]) -> str:
@@ -125,10 +221,7 @@ Continue building your understanding of this file based on what you've seen so f
         file_path = chunks[0]["file_path"]
         logger.info(f"Processing {len(chunks)} chunks from {file_path}")
         
-        # Reset conversation history
-        self.reset()
-        
-        # Process each chunk
+        # Process each chunk sequentially to maintain context
         for i, chunk in enumerate(chunks):
             # Only generate a summary for the last chunk
             summarize = (i == len(chunks) - 1)
@@ -165,18 +258,16 @@ Continue building your understanding of this file based on what you've seen so f
                 file_chunks[file_path] = []
             file_chunks[file_path].append(chunk)
         
-        # Process each file's chunks
+        # Process files sequentially
         file_summaries = {}
         for file_path, chunks in file_chunks.items():
             # Sort chunks by index
             chunks.sort(key=lambda x: x["chunk_index"])
-            
-            # Process chunks and get summary
-            summary = self.process_file_chunks(chunks)
-            file_summaries[file_path] = summary
+            # Process the file
+            file_summaries[file_path] = self.process_file_chunks(chunks)
         
         return file_summaries
-        
+    
     def generate_repository_understanding(self, file_summaries: Dict[str, str]) -> str:
         """
         Generate a comprehensive understanding of the repository based on file summaries
@@ -199,6 +290,10 @@ Continue building your understanding of this file based on what you've seen so f
         
         user_message = "Based on the following file summaries, provide a comprehensive understanding of the repository's purpose, structure, and functionality:\n\n"
         
+        # Add error notice if any chunks failed
+        if self.chunk_errors:
+            user_message += "⚠️ Note: Some file chunks could not be fully processed due to size limitations. The analysis below is based on the available content.\n\n"
+        
         for file_path, summary in file_summaries.items():
             # Skip dummy files
             if file_path == "dummy.txt":
@@ -217,9 +312,28 @@ Continue building your understanding of this file based on what you've seen so f
                 max_tokens=2000
             )
             
+            # Track token usage
+            self.total_prompt_tokens += response.usage.prompt_tokens
+            self.total_completion_tokens += response.usage.completion_tokens
+            
             # Get the response content
             return response.choices[0].message.content.strip()
             
         except Exception as e:
             logger.error(f"Error generating repository understanding: {e}")
-            return f"Error generating repository understanding: {str(e)}" 
+            return f"Error generating repository understanding: {str(e)}"
+    
+    def get_processing_metadata(self) -> Dict:
+        """
+        Get metadata about the processing
+        
+        Returns:
+            Dict: Processing metadata
+        """
+        return {
+            "total_prompt_tokens": self.total_prompt_tokens,
+            "total_completion_tokens": self.total_completion_tokens,
+            "total_tokens": self.total_prompt_tokens + self.total_completion_tokens,
+            "chunk_errors": len(self.chunk_errors),
+            "error_details": self.chunk_errors if self.chunk_errors else None
+        } 

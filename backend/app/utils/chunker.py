@@ -1,193 +1,205 @@
 import os
 import logging
-from typing import List, Dict, Tuple, Generator
+from typing import List, Dict, Optional
 
 # Set up logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class FileChunker:
     """
-    Handles breaking large files into manageable chunks for LLM processing
+    Chunks large files into smaller pieces for processing
     """
     
-    def __init__(self, 
-                 chunk_size: int = 250,  # Lines per chunk
-                 overlap: int = 20,      # Lines of overlap between chunks
-                 max_file_size: int = 5000):  # Maximum file size in lines
-        self.chunk_size = chunk_size
+    def __init__(self, max_chunk_size: int = 4000, overlap: int = 200):
+        """
+        Initialize the FileChunker
+        
+        Args:
+            max_chunk_size: Maximum size of each chunk in characters
+            overlap: Number of characters to overlap between chunks
+        """
+        self.max_chunk_size = max_chunk_size
         self.overlap = overlap
-        self.max_file_size = max_file_size
     
-    def should_chunk_file(self, content: str) -> bool:
+    def chunk_file(self, file_path: str, file_content: Optional[str] = None) -> List[Dict]:
         """
-        Determine if a file needs to be chunked based on its size
-        
-        Args:
-            content: File content
-            
-        Returns:
-            bool: True if file should be chunked
-        """
-        line_count = content.count('\n') + 1
-        return line_count > self.chunk_size
-    
-    def chunk_content(self, content: str, file_path: str) -> List[Dict]:
-        """
-        Break file content into overlapping chunks
-        
-        Args:
-            content: File content
-            file_path: Path to the file (for reference)
-            
-        Returns:
-            List[Dict]: List of chunks with metadata
-        """
-        lines = content.split('\n')
-        
-        # Skip if file is too large to process
-        if len(lines) > self.max_file_size:
-            logger.warning(f"File {file_path} exceeds max size ({len(lines)} lines). Truncating.")
-            lines = lines[:self.max_file_size]
-            
-        chunks = []
-        
-        # If file is small enough, return as a single chunk
-        if len(lines) <= self.chunk_size:
-            chunks.append({
-                "content": content,
-                "start_line": 1,
-                "end_line": len(lines),
-                "chunk_index": 0,
-                "total_chunks": 1,
-                "file_path": file_path
-            })
-            return chunks
-        
-        # Break into chunks with overlap
-        for i in range(0, len(lines), self.chunk_size - self.overlap):
-            # Make sure we don't go beyond the end of the file
-            end_idx = min(i + self.chunk_size, len(lines))
-            
-            # Extract chunk content
-            chunk_content = '\n'.join(lines[i:end_idx])
-            
-            # Add metadata
-            chunk_index = len(chunks)
-            total_chunks = (len(lines) - 1) // (self.chunk_size - self.overlap) + 1
-            
-            chunks.append({
-                "content": chunk_content,
-                "start_line": i + 1,  # 1-indexed line numbers
-                "end_line": end_idx,
-                "chunk_index": chunk_index,
-                "total_chunks": total_chunks,
-                "file_path": file_path
-            })
-            
-            # If we've reached the end of the file, break
-            if end_idx == len(lines):
-                break
-                
-        return chunks
-    
-    def chunk_file(self, file_path: str) -> List[Dict]:
-        """
-        Read a file and break it into chunks
+        Split a file into chunks
         
         Args:
             file_path: Path to the file
+            file_content: Optional pre-loaded file content
             
         Returns:
             List[Dict]: List of chunks with metadata
         """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            return self.chunk_content(content, file_path)
-        except UnicodeDecodeError:
+        # Read file if content not provided
+        if file_content is None:
             try:
-                # Try with a different encoding
-                with open(file_path, 'r', encoding='latin-1') as f:
-                    content = f.read()
-                return self.chunk_content(content, file_path)
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    file_content = f.read()
             except Exception as e:
-                logger.warning(f"Could not read file {file_path} with latin-1 encoding: {e}")
+                logger.error(f"Error reading file {file_path}: {e}")
                 return []
-        except Exception as e:
-            logger.warning(f"Error chunking file {file_path}: {e}")
+        
+        # Skip empty files
+        if not file_content.strip():
             return []
+        
+        # For very small files, just return a single chunk
+        if len(file_content) <= self.max_chunk_size:
+            return [{
+                "file_path": os.path.basename(file_path),
+                "chunk_index": 0,
+                "total_chunks": 1,
+                "start_line": 1,
+                "end_line": file_content.count('\n') + 1,
+                "content": file_content
+            }]
+        
+        # For larger files, split into chunks
+        chunks = []
+        lines = file_content.split('\n')
+        
+        current_chunk = []
+        current_size = 0
+        chunk_index = 0
+        start_line = 1
+        
+        for i, line in enumerate(lines):
+            line_size = len(line) + 1  # +1 for the newline
+            
+            # If adding this line would exceed the chunk size and we already have content,
+            # save the current chunk and start a new one
+            if current_size + line_size > self.max_chunk_size and current_chunk:
+                # Join the current chunk into a string
+                chunk_content = '\n'.join(current_chunk)
+                
+                # Calculate end line
+                end_line = start_line + len(current_chunk) - 1
+                
+                # Save the chunk
+                chunks.append({
+                    "file_path": os.path.basename(file_path),
+                    "chunk_index": chunk_index,
+                    "total_chunks": 0,  # Will be updated later
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "content": chunk_content
+                })
+                
+                # Start a new chunk with overlap
+                overlap_start = max(0, len(current_chunk) - self.get_line_overlap(current_chunk))
+                current_chunk = current_chunk[overlap_start:]
+                current_size = sum(len(l) + 1 for l in current_chunk)
+                
+                # Update for next chunk
+                chunk_index += 1
+                start_line = end_line - len(current_chunk) + 1
+            
+            # Add the current line to the chunk
+            current_chunk.append(line)
+            current_size += line_size
+        
+        # Don't forget the last chunk
+        if current_chunk:
+            end_line = start_line + len(current_chunk) - 1
+            chunks.append({
+                "file_path": os.path.basename(file_path),
+                "chunk_index": chunk_index,
+                "total_chunks": 0,  # Will be updated later
+                "start_line": start_line,
+                "end_line": end_line,
+                "content": '\n'.join(current_chunk)
+            })
+        
+        # Update total_chunks for all chunks
+        total_chunks = len(chunks)
+        for chunk in chunks:
+            chunk["total_chunks"] = total_chunks
+        
+        return chunks
     
-    def chunk_files(self, file_paths: List[str]) -> Dict[str, List[Dict]]:
+    def get_line_overlap(self, lines: List[str]) -> int:
         """
-        Process multiple files and chunk them if needed
+        Calculate how many lines to overlap based on content
         
         Args:
-            file_paths: List of file paths
+            lines: List of lines in the current chunk
             
         Returns:
-            Dict[str, List[Dict]]: Dictionary mapping file paths to their chunks
+            int: Number of lines to overlap
         """
-        result = {}
+        # Target overlap in characters
+        target_overlap = self.overlap
         
-        for file_path in file_paths:
-            chunks = self.chunk_file(file_path)
-            if chunks:
-                result[file_path] = chunks
+        # Count backwards until we reach the target overlap
+        overlap_size = 0
+        overlap_lines = 0
+        
+        for line in reversed(lines):
+            line_size = len(line) + 1  # +1 for newline
+            if overlap_size + line_size > target_overlap * 2:  # Allow up to 2x the target for complete context
+                break
                 
-        return result
+            overlap_size += line_size
+            overlap_lines += 1
+            
+            # Stop if we've reached a reasonable minimum
+            if overlap_lines >= 5 and overlap_size >= target_overlap:
+                break
+        
+        # Ensure we have at least 2 lines of overlap for context
+        return max(2, overlap_lines)
 
-
-def chunk_repository_files(repo_path: str, important_files: List[str], 
-                          chunk_size: int = 250, overlap: int = 20) -> List[Dict]:
+def chunk_repository_files(repo_path: str, file_paths: List[str], max_chunk_size: int = 4000) -> List[Dict]:
     """
-    Process important files in a repository and chunk them for LLM processing
+    Chunk multiple files from a repository
     
     Args:
         repo_path: Path to the repository
-        important_files: List of important file paths (relative to repo_path)
-        chunk_size: Number of lines per chunk
-        overlap: Number of lines of overlap between chunks
+        file_paths: List of file paths to chunk (relative to repo_path)
+        max_chunk_size: Maximum size of each chunk in characters
         
     Returns:
-        List[Dict]: List of all chunks from all files
+        List[Dict]: List of chunks with metadata
     """
-    chunker = FileChunker(chunk_size=chunk_size, overlap=overlap)
+    chunker = FileChunker(max_chunk_size=max_chunk_size)
     all_chunks = []
     
-    # Check if we have any files to process
-    if not important_files:
-        logger.warning("No important files found in repository")
-        return []
-        
-    # Process each file
-    files_processed = 0
-    for file_path in important_files:
+    # Adjust chunk size based on number of files
+    # More files = smaller chunks to fit within token limits
+    if len(file_paths) > 10:
+        max_chunk_size = 3000
+    elif len(file_paths) > 5:
+        max_chunk_size = 3500
+    
+    for file_path in file_paths:
         full_path = os.path.join(repo_path, file_path)
-        if os.path.exists(full_path) and os.path.isfile(full_path):
-            try:
-                chunks = chunker.chunk_file(full_path)
-                if chunks:
-                    all_chunks.extend(chunks)
-                    files_processed += 1
-                    logger.info(f"Successfully chunked {file_path} into {len(chunks)} chunks")
-            except Exception as e:
-                logger.warning(f"Error processing file {file_path}: {e}")
-        else:
-            logger.warning(f"File {file_path} not found in repository")
+        
+        try:
+            chunks = chunker.chunk_file(full_path)
+            
+            # Update file_path to include the relative path within the repo
+            for chunk in chunks:
+                chunk["file_path"] = file_path
+                
+            all_chunks.extend(chunks)
+            logger.info(f"Successfully chunked {file_path} into {len(chunks)} chunks")
+            
+        except Exception as e:
+            logger.error(f"Error chunking file {file_path}: {e}")
     
-    logger.info(f"Processed {files_processed} files into {len(all_chunks)} chunks")
-    
-    # If we didn't process any files, create a dummy chunk
+    # If no chunks were created, add a dummy chunk
     if not all_chunks:
-        logger.warning("No files were successfully chunked. Creating a dummy chunk.")
         all_chunks.append({
-            "content": "No readable files found in the repository.",
-            "start_line": 1,
-            "end_line": 1,
+            "file_path": "dummy.txt",
             "chunk_index": 0,
             "total_chunks": 1,
-            "file_path": "dummy.txt"
+            "start_line": 1,
+            "end_line": 1,
+            "content": "No readable files found in the repository."
         })
     
+    logger.info(f"Processed {len(file_paths)} files into {len(all_chunks)} chunks")
     return all_chunks 

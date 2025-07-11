@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from pydantic import BaseModel, HttpUrl
 
 class ReadmeTone(str, Enum):
@@ -15,6 +15,19 @@ class GenerationMode(str, Enum):
     CONCISE = "concise"
     CREATIVE = "creative"
 
+class FilePreview(BaseModel):
+    """Preview of a file used in README generation"""
+    path: str
+    preview: str
+
+class ProcessingMetadata(BaseModel):
+    """Metadata about the processing of files"""
+    total_prompt_tokens: int
+    total_completion_tokens: int
+    total_tokens: int
+    chunk_errors: int
+    error_details: Optional[List[Dict[str, Any]]] = None
+
 class GenerateRequest(BaseModel):
     """Request model for README generation"""
     repo_url: HttpUrl
@@ -27,8 +40,10 @@ class GenerateResponse(BaseModel):
     """Response model for README generation"""
     success: bool
     readme: str
-    metadata: Optional[Dict] = None
+    metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    file_preview: Optional[List[FilePreview]] = None
+    processing_metadata: Optional[ProcessingMetadata] = None
 
 class ModelInfo(BaseModel):
     """Model information"""

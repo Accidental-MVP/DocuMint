@@ -1,8 +1,13 @@
-import openai
+import logging
+from openai import OpenAI
 from ..config import OPENAI_API_KEY, DEFAULT_MODEL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 
-# Configure OpenAI API key
-openai.api_key = OPENAI_API_KEY
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 def generate_readme(prompt: str, model: str = DEFAULT_MODEL, 
                     temperature: float = DEFAULT_TEMPERATURE,
@@ -21,11 +26,11 @@ def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
     """
     try:
         if not OPENAI_API_KEY:
-            # Return mock response for testing without API key
+            logger.warning("No OpenAI API key found. Using mock README.")
             return _get_mock_readme()
             
-        # Use the OpenAI API in synchronous mode with v0.28.1
-        response = openai.ChatCompletion.create(
+        # Use the modern OpenAI client approach
+        response = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "You are a technical writer specializing in creating clear, concise README files for GitHub repositories."},
@@ -35,11 +40,39 @@ def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
             max_tokens=max_tokens
         )
         
-        return response.choices[0].message['content']
+        # Track token usage for billing purposes
+        _track_token_usage(response)
+        
+        # Add response structure check
+        try:
+            return response.choices[0].message.content.strip()
+        except (AttributeError, IndexError) as e:
+            logger.warning(f"Error parsing OpenAI response: {e}")
+            return _get_mock_readme()
+            
     except Exception as e:
-        print(f"Error calling OpenAI API: {e}")
+        logger.warning(f"Error calling OpenAI API: {e}")
         # Fallback to mock response in case of errors
         return _get_mock_readme()
+
+def _track_token_usage(response):
+    """
+    Track token usage for billing purposes
+    
+    Args:
+        response: OpenAI API response
+    """
+    try:
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        total_tokens = response.usage.total_tokens
+        
+        logger.info(f"Token usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
+        
+        # TODO: Store token usage in database for Stripe integration
+        # Example: db.save_token_usage(user_id, prompt_tokens, completion_tokens, total_tokens)
+    except Exception as e:
+        logger.warning(f"Failed to track token usage: {e}")
 
 def _get_mock_readme():
     """Return a mock README for testing purposes"""

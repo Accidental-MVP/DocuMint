@@ -19,5 +19,43 @@ DEFAULT_MODEL = "gpt-4"
 DEFAULT_TEMPERATURE = 0.3
 DEFAULT_MAX_TOKENS = 4000
 
+# Available models
+AVAILABLE_MODELS = {
+    "gpt-4": {
+        "name": "GPT-4",
+        "max_tokens": 8192,
+        "description": "Most powerful model, best for complex README generation"
+    },
+    "gpt-3.5-turbo": {
+        "name": "GPT-3.5 Turbo",
+        "max_tokens": 4096,
+        "description": "Faster and more cost-effective model"
+    }
+}
+
+# Generation modes
+GENERATION_MODES = {
+    "standard": {
+        "name": "Standard",
+        "description": "Balanced README with all essential sections",
+        "temperature": 0.3
+    },
+    "detailed": {
+        "name": "Detailed",
+        "description": "Comprehensive README with extensive documentation",
+        "temperature": 0.2
+    },
+    "concise": {
+        "name": "Concise",
+        "description": "Brief README with only the most important information",
+        "temperature": 0.3
+    },
+    "creative": {
+        "name": "Creative",
+        "description": "More creative and engaging README",
+        "temperature": 0.7
+    }
+}
+
 # Default repo URL for testing
 DEFAULT_REPO_URL = "https://github.com/fastapi-users/fastapi-users"

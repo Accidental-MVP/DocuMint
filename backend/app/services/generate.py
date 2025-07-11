@@ -1,22 +1,27 @@
 import logging
 from typing import Dict, Optional
 
-from ..utils.parser import clone_repository, get_important_files, cleanup_repository
+from ..utils.parser import clone_repository, get_chunked_repository_content, cleanup_repository
+from ..utils.reader import ContextAwareReader
 from ..utils.llm import generate_readme
-from ..config import DEFAULT_REPO_URL
+from ..config import DEFAULT_REPO_URL, AVAILABLE_MODELS, GENERATION_MODES
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL, 
-                            tone: str = "professional") -> Dict:
+                            tone: str = "professional",
+                            model: str = "gpt-4",
+                            mode: str = "standard") -> Dict:
     """
     Generate a README for a GitHub repository
     
     Args:
         repo_url: URL of the GitHub repository
         tone: Tone for the README (professional, startup, meme)
+        model: Model to use for generation
+        mode: Generation mode (standard, detailed, concise, creative)
         
     Returns:
         Dict: Generated README and metadata
@@ -28,14 +33,42 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         logger.info(f"Starting README generation for: {repo_url}")
         repo_path = clone_repository(repo_url)
         
-        # Get important files from the repository
-        important_files = get_important_files(repo_path)
+        # Get chunked content from important files
+        logger.info("Analyzing repository and chunking files")
+        chunks = get_chunked_repository_content(repo_path)
         
-        # Build prompt for the LLM
-        prompt = _build_prompt(repo_url, important_files, tone)
+        # Process chunks with context-aware reader
+        logger.info("Processing file chunks with context")
+        reader = ContextAwareReader(model="gpt-3.5-turbo")  # Use faster model for analysis
+        file_summaries = reader.process_repository_chunks(chunks)
+        
+        # Generate repository understanding
+        logger.info("Generating repository understanding")
+        repo_understanding = reader.generate_repository_understanding(file_summaries)
+        
+        # Get model and mode settings
+        model_settings = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["gpt-4"])
+        mode_settings = GENERATION_MODES.get(mode, GENERATION_MODES["standard"])
+        
+        # Build prompt for the README generation
+        prompt = _build_prompt(repo_url, repo_understanding, file_summaries, tone, mode)
+        
+        # Calculate a safe max_tokens value (leaving room for the prompt)
+        # For GPT-4, we'll use a conservative estimate to avoid token limit errors
+        prompt_token_estimate = len(prompt.split()) * 1.3  # Rough estimate: words * 1.3
+        max_tokens = min(model_settings["max_tokens"] - int(prompt_token_estimate) - 500, 4000)
+        max_tokens = max(1000, max_tokens)  # Ensure we have at least 1000 tokens for output
+        
+        logger.info(f"Using max_tokens={max_tokens} for README generation")
         
         # Generate README using LLM
-        readme_content = generate_readme(prompt)
+        logger.info(f"Generating README with {model}")
+        readme_content = generate_readme(
+            prompt=prompt,
+            model=model,
+            temperature=mode_settings["temperature"],
+            max_tokens=max_tokens
+        )
         
         return {
             "success": True,
@@ -43,7 +76,10 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
             "metadata": {
                 "repo_url": repo_url,
                 "tone": tone,
-                "files_analyzed": len(important_files)
+                "model": model,
+                "mode": mode,
+                "files_analyzed": len(file_summaries),
+                "chunks_processed": len(chunks)
             }
         }
     except Exception as e:
@@ -58,14 +94,16 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         if repo_path:
             cleanup_repository(repo_path)
 
-def _build_prompt(repo_url: str, important_files, tone: str) -> str:
+def _build_prompt(repo_url: str, repo_understanding: str, file_summaries: Dict[str, str], tone: str, mode: str) -> str:
     """
     Build a prompt for the LLM to generate a README
     
     Args:
         repo_url: URL of the GitHub repository
-        important_files: List of important files with their content
+        repo_understanding: Overall understanding of the repository
+        file_summaries: Summaries of important files
         tone: Tone for the README
+        mode: Generation mode
         
     Returns:
         str: Prompt for the LLM
@@ -77,17 +115,26 @@ def _build_prompt(repo_url: str, important_files, tone: str) -> str:
     prompt = f"""You are a technical writer creating a README.md file for the GitHub repository: {repo_url}
 Repository name: {repo_name}
 
-Based on the following files and their content, create a comprehensive README.md file:
+I have analyzed the repository and here is my understanding:
+
+{repo_understanding}
+
+Here are summaries of the most important files:
 
 """
     
-    # Add important files to the prompt
-    for file_path, content in important_files:
-        # Truncate content if it's too long
-        if len(content) > 500:
-            content = content[:500] + "... [content truncated]"
-            
-        prompt += f"\n--- File: {file_path} ---\n{content}\n"
+    # Add file summaries to the prompt (limit to top 3 files if there are many)
+    file_paths = list(file_summaries.keys())
+    if len(file_paths) > 3:
+        logger.info(f"Limiting file summaries to top 3 (out of {len(file_paths)})")
+        file_paths = file_paths[:3]
+        
+    for file_path in file_paths:
+        summary = file_summaries[file_path]
+        # Truncate very long summaries
+        if len(summary) > 1000:
+            summary = summary[:1000] + "... [summary truncated]"
+        prompt += f"\n## {file_path}\n{summary}\n"
     
     # Add tone instructions
     tone_instructions = {
@@ -96,7 +143,16 @@ Based on the following files and their content, create a comprehensive README.md
         "meme": "Use a humorous tone with internet memes and jokes, while still being informative."
     }
     
+    # Add mode-specific instructions
+    mode_instructions = {
+        "standard": "Create a balanced README with all essential sections.",
+        "detailed": "Create a comprehensive README with extensive documentation and detailed explanations.",
+        "concise": "Create a brief README with only the most important information, focusing on clarity and brevity.",
+        "creative": "Create an engaging and creative README that stands out while still being informative."
+    }
+    
     prompt += f"\n\nTone: {tone_instructions.get(tone, tone_instructions['professional'])}"
+    prompt += f"\n\nStyle: {mode_instructions.get(mode, mode_instructions['standard'])}"
     
     # Add structure instructions
     prompt += """

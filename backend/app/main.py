@@ -43,10 +43,19 @@ def root():
         "description": "AI-powered README generator for GitHub repositories",
         "endpoints": {
             "generate": "/api/generate",
+            "models": "/api/models",
+            "modes": "/api/modes",
             "health": "/api/health",
         }
     }
 
 if __name__ == "__main__":
     logger.info(f"Starting {APP_NAME} v{APP_VERSION}")
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "app.main:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        reload=True,
+        timeout_keep_alive=120,  # Increase keep-alive timeout
+        timeout_graceful_shutdown=60,  # Increase graceful shutdown timeout
+    )

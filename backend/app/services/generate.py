@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL, 
                             tone: str = "professional",
                             model: str = "gpt-4",
-                            mode: str = "standard") -> Dict:
+                            mode: str = "standard",
+                            max_files: Optional[int] = None) -> Dict:
     """
     Generate a README for a GitHub repository
     
@@ -22,6 +23,7 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         tone: Tone for the README (professional, startup, meme)
         model: Model to use for generation
         mode: Generation mode (standard, detailed, concise, creative)
+        max_files: Maximum number of files to analyze (optional)
         
     Returns:
         Dict: Generated README and metadata
@@ -35,7 +37,7 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         
         # Get chunked content from important files
         logger.info("Analyzing repository and chunking files")
-        chunks = get_chunked_repository_content(repo_path)
+        chunks = get_chunked_repository_content(repo_path, client_max_files=max_files)
         
         # Process chunks with context-aware reader
         logger.info("Processing file chunks with context")

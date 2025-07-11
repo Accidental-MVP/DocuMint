@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
-from pydantic import BaseModel, HttpUrl
 from typing import Optional, Dict, List
 import logging
 
 from ..services.generate import generate_readme_for_repo
 from ..config import AVAILABLE_MODELS, GENERATION_MODES
+from ..models.readme import (
+    GenerateRequest, GenerateResponse, 
+    ModelInfo, ModeInfo, 
+    ModelsResponse, ModesResponse,
+    ReadmeTone, GenerationMode
+)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -12,37 +17,6 @@ logger = logging.getLogger(__name__)
 
 # Create API router
 router = APIRouter()
-
-# Define request models
-class GenerateRequest(BaseModel):
-    repo_url: HttpUrl
-    tone: Optional[str] = "professional"  # professional, startup, meme
-    model: Optional[str] = "gpt-4"
-    mode: Optional[str] = "standard"
-
-class GenerateResponse(BaseModel):
-    success: bool
-    readme: str
-    metadata: Optional[Dict] = None
-    error: Optional[str] = None
-
-class ModelInfo(BaseModel):
-    id: str
-    name: str
-    description: str
-    max_tokens: int
-
-class ModeInfo(BaseModel):
-    id: str
-    name: str
-    description: str
-    temperature: float
-
-class ModelsResponse(BaseModel):
-    models: List[ModelInfo]
-
-class ModesResponse(BaseModel):
-    modes: List[ModeInfo]
 
 @router.post("/generate", response_model=GenerateResponse)
 def generate_readme(request: GenerateRequest):
@@ -58,16 +32,17 @@ def generate_readme(request: GenerateRequest):
             request.model = "gpt-4"
             
         # Validate mode
-        if request.mode not in GENERATION_MODES:
+        if request.mode not in [mode.value for mode in GenerationMode]:
             logger.warning(f"Invalid mode: {request.mode}, using default")
-            request.mode = "standard"
+            request.mode = GenerationMode.STANDARD
         
         # Call the service to generate the README
         result = generate_readme_for_repo(
             repo_url=str(request.repo_url),
-            tone=request.tone,
+            tone=request.tone.value,
             model=request.model,
-            mode=request.mode
+            mode=request.mode,
+            max_files=request.max_files
         )
         
         return result

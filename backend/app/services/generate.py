@@ -144,10 +144,12 @@ def _build_prompt(repo_url: str, repo_understanding: str, file_summaries: Dict[s
     repo_name = repo_url.split('/')[-1].replace('.git', '')
     
     # Start with the base prompt
-    prompt = f"""You are a technical writer creating a README.md file for the GitHub repository: {repo_url}
+    prompt = f"""You are a senior technical writer hired to create a compelling, helpful, and user-focused README.md for the following GitHub repository. Your goal is to make it useful for developers evaluating whether to use this repo.
+
+Repository: {repo_url}
 Repository name: {repo_name}
 
-I have analyzed the repository and here is my understanding:
+Based on the repository's structure and files, here is an internal summary of its purpose and functionality:
 
 {repo_understanding}
 
@@ -170,17 +172,17 @@ Here are summaries of the most important files:
     
     # Add tone instructions
     tone_instructions = {
-        "professional": "Use a professional and straightforward tone.",
-        "startup": "Use an enthusiastic startup-like tone with emojis and modern language.",
-        "meme": "Use a humorous tone with internet memes and jokes, while still being informative."
+        "professional": "Use a professional and straightforward tone that would appeal to enterprise developers.",
+        "startup": "Use an enthusiastic startup-like tone with emojis and modern language. Be energetic but still informative.",
+        "meme": "Use a humorous tone with internet memes and jokes, while still being informative and helpful to developers."
     }
     
     # Add mode-specific instructions
     mode_instructions = {
-        "standard": "Create a balanced README with all essential sections.",
-        "detailed": "Create a comprehensive README with extensive documentation and detailed explanations.",
-        "concise": "Create a brief README with only the most important information, focusing on clarity and brevity.",
-        "creative": "Create an engaging and creative README that stands out while still being informative."
+        "standard": "Create a balanced README with all essential sections. Keep the total length under 1500 words.",
+        "detailed": "Create a comprehensive README with extensive documentation and detailed explanations. Include more examples and technical details.",
+        "concise": "Create a brief README with only the most important information, focusing on clarity and brevity. Keep it under 800 words.",
+        "creative": "Create an engaging and creative README that stands out while still being informative. Use metaphors, analogies or storytelling techniques where appropriate."
     }
     
     prompt += f"\n\nTone: {tone_instructions.get(tone, tone_instructions['professional'])}"
@@ -190,15 +192,20 @@ Here are summaries of the most important files:
     prompt += """
 
 Create a README.md with the following sections:
-1. Title and brief description
-2. Features
-3. Installation instructions
-4. Usage examples
-5. Project structure
-6. License information (if available)
-7. Contributing guidelines (optional)
+1. Title and a compelling introduction explaining what the project does, who it is for, and what problem it solves.
+2. Features that highlight the key capabilities and benefits of the project.
+3. Installation instructions that are clear, concise, and complete.
+4. Usage examples that show developers how to use the project effectively.
+5. Project structure with a brief explanation of what each major folder/file does.
+6. License information (if available).
+7. Contributing guidelines (optional).
 
-Use proper Markdown formatting including headers, code blocks, lists, and emphasis where appropriate.
+Additional guidelines:
+- Use proper Markdown formatting including headers, code blocks, lists, and emphasis where appropriate.
+- If any important library, tool, or dependency is clearly central to the project, mention it in the introduction or Features section.
+- Avoid repeating content from one section in another unless necessary.
+- Do not invent features or sections that are not supported by the provided summaries.
+- Write as if a human developer who deeply understands the project is explaining it to a colleague.
 """
     
     return prompt

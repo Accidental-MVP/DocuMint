@@ -11,14 +11,14 @@ class TokenCounter:
     Handles real-time token counting for prompt assembly
     """
     
-    def __init__(self, model_name: str = "gpt-4", max_tokens: int = 8192, buffer: int = 500):
+    def __init__(self, model_name: str = "gpt-4-1106-preview", max_tokens: int = 128000, buffer: int = 2000):
         """
         Initialize the TokenCounter
         
         Args:
             model_name: The name of the model to use for encoding
             max_tokens: Maximum tokens allowed for the model
-            buffer: Buffer to leave for the response
+            buffer: Buffer to leave for the response (increased to 2000)
         """
         self.model_name = model_name
         self.max_tokens = max_tokens
@@ -248,31 +248,35 @@ class TokenCounter:
             success, _ = self.add_to_prompt(text, section_name, priority)
             return success, token_count, text
             
-        # Try fallback handler if provided
-        if fallback_handler:
-            remaining = self.get_remaining_tokens()
-            fallback_text = fallback_handler(text, remaining)
-            will_fit, token_count = self.will_fit(fallback_text)
-            
-            if will_fit:
-                success, _ = self.add_to_prompt(fallback_text, section_name, priority)
-                return success, token_count, fallback_text
-        
-        # Default fallback: truncate to fit
+        # Text won't fit, try fallback options
         remaining = self.get_remaining_tokens()
-        if remaining > 10:  # Only if we have some reasonable space left
-            truncated = self.truncate_text(text, remaining)
-            success, token_count = self.add_to_prompt(truncated, section_name, priority)
-            return success, token_count, truncated
+        logger.warning(f"Text for {section_name or 'unnamed section'} won't fit. Needs {token_count}, have {remaining}")
+        
+        # Check if we're approaching the token limit
+        if remaining < 3000:
+            logger.warning(f"Approaching token limit. Only {remaining} tokens left. Stopping file additions.")
+            return False, token_count, ""
             
-        return False, 0, ""
-    
+        # If custom handler provided, use it
+        if fallback_handler:
+            modified_text = fallback_handler(text, remaining)
+            if modified_text != text:
+                will_fit, new_count = self.will_fit(modified_text)
+                if will_fit:
+                    success, _ = self.add_to_prompt(modified_text, section_name, priority)
+                    return success, new_count, modified_text
+        
+        # Default fallback: truncate
+        truncated = self.truncate_text(text, remaining)
+        success, actual_count = self.add_to_prompt(truncated, section_name, priority)
+        return success, actual_count, truncated
+        
     def get_section_stats(self) -> Dict[str, Dict[str, Any]]:
         """
-        Get statistics about all tracked sections
+        Get statistics about the sections in the token counter
         
         Returns:
-            Dict: Statistics about all sections
+            Dict: Dictionary of section statistics
         """
         stats = {}
         for name, data in self.sections.items():

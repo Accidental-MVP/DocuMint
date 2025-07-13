@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL, 
                             tone: str = "professional",
-                            model: str = "gpt-4",
+                            model: str = "gpt-4-1106-preview",
                             mode: str = "standard",
                             max_files: Optional[int] = None) -> Dict:
     """
@@ -61,7 +61,7 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         processing_metadata = reader.get_processing_metadata()
         
         # Get model and mode settings
-        model_settings = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["gpt-4"])
+        model_settings = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["gpt-4-1106-preview"])
         mode_settings = GENERATION_MODES.get(mode, GENERATION_MODES["standard"])
         
         # Build prompt for the README generation with real-time token tracking
@@ -80,9 +80,9 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         max_tokens = token_metadata["remaining_tokens"]
         
         # Adjust max_tokens if it's too small
-        if max_tokens < 500:
-            logger.warning(f"Remaining tokens ({max_tokens}) is too small, using minimum of 500")
-            max_tokens = 500
+        if max_tokens < 2000:
+            logger.warning(f"Remaining tokens ({max_tokens}) is too small, using minimum of 2000")
+            max_tokens = 2000
         
         logger.info(f"Using max_tokens={max_tokens} for README generation")
         
@@ -168,8 +168,8 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
             cleanup_repository(repo_path)
 
 def _build_prompt(repo_url: str, repo_understanding: str, file_summaries: Dict[str, str], 
-                 tone: str, mode: str, model_name: str = "gpt-4", 
-                 model_max_tokens: int = 8192) -> tuple[str, Dict]:
+                 tone: str, mode: str, model_name: str = "gpt-4-1106-preview", 
+                 model_max_tokens: int = 128000) -> tuple[str, Dict]:
     """
     Build a prompt for the LLM to generate a README with real-time token tracking
     
@@ -189,7 +189,7 @@ def _build_prompt(repo_url: str, repo_understanding: str, file_summaries: Dict[s
     token_counter = TokenCounter(
         model_name=model_name,
         max_tokens=model_max_tokens,
-        buffer=500  # Buffer for the response
+        buffer=2000  # Increased buffer for the response
     )
     
     # Extract repo name from URL
@@ -248,254 +248,227 @@ Based on the repository's structure and files, here is an internal summary of it
     
     # Categorize files by importance
     essential_files = []
-    important_files = []
-    other_files = []
+    standard_files = []
     
     for file_path in file_paths:
-        file_lower = file_path.lower()
         # Check if this is an essential file
-        if any(pattern in file_lower for pattern in essential_patterns):
+        is_essential = any(pattern in file_path.lower() for pattern in essential_patterns)
+        
+        if is_essential:
             essential_files.append(file_path)
-        # Important files are typically shorter and thus more token-efficient
-        elif len(file_summaries[file_path]) < 500:
-            important_files.append(file_path)
         else:
-            other_files.append(file_path)
+            standard_files.append(file_path)
     
-    # Sort each category by length for efficiency
-    essential_files.sort(key=lambda path: len(file_summaries[path]))
-    important_files.sort(key=lambda path: len(file_summaries[path]))
-    other_files.sort(key=lambda path: len(file_summaries[path]))
+    # Sort files by path for consistent output
+    essential_files.sort()
+    standard_files.sort()
     
-    # Process files in priority order
-    all_files_by_priority = essential_files + important_files + other_files
+    # Process essential files first
+    files_included = 0
+    files_truncated = 0
+    files_skipped = 0
     
-    # Track how many files we've included
-    included_files = 0
-    skipped_files = 0
-    truncated_files = 0
-    file_sections = {}
-    
-    # Define a custom fallback handler for file summaries
+    # Function to add file summary with fallback handling
     def file_summary_fallback(text, available_tokens):
         # Extract file path from the text
-        lines = text.split('\n', 1)
-        if len(lines) < 2 or not lines[0].startswith('## '):
-            return token_counter.truncate_text(text, available_tokens)
+        lines = text.split('\n')
+        file_path = lines[0].replace('File: ', '').strip()
         
-        file_path = lines[0][3:]  # Remove '## ' prefix
-        summary = lines[1]
+        # If we have very limited tokens, just include the file path
+        if available_tokens < 100:
+            return f"File: {file_path}\n(Summary truncated due to token limits)\n\n"
+            
+        # Otherwise, truncate the content
+        max_summary_tokens = available_tokens - 50  # Leave some buffer
         
-        # Try with a truncated summary
-        if len(summary) > 300:
-            truncated_summary = summary[:300] + "... [summary truncated due to token limits]"
-            return f"## {file_path}\n{truncated_summary}"
+        # Keep the file path and truncate the rest
+        truncated_text = f"File: {file_path}\n"
+        
+        # Add as much of the summary as we can
+        remaining_text = '\n'.join(lines[1:])
+        encoded_remaining = token_counter.encoding.encode(remaining_text)
+        
+        if len(encoded_remaining) <= max_summary_tokens:
+            truncated_text += remaining_text
         else:
-            return token_counter.truncate_text(text, available_tokens)
+            # Decode only the tokens we can fit
+            truncated_summary = token_counter.encoding.decode(encoded_remaining[:max_summary_tokens])
+            truncated_text += truncated_summary + "...\n"
+            
+        return truncated_text
     
-    # First pass: try to include all essential files
+    # Process essential files first
     for file_path in essential_files:
-        summary = file_summaries[file_path]
-        file_section = f"## {file_path}\n{summary}\n\n"
-        section_name = f"file_{file_path}"
-        
-        # Try to add with fallback options
-        success, tokens, added_text = token_counter.add_with_fallback(
-            file_section,
-            section_name=section_name,
-            priority=priorities["file_summaries"] + 2,  # Higher priority for essential files
-            fallback_handler=file_summary_fallback
-        )
-        
-        if success:
-            file_sections[file_path] = added_text
-            included_files += 1
-            if added_text != file_section:
-                truncated_files += 1
-        else:
-            # If we can't even add essential files, we need to make space
-            needed_tokens = token_counter.count_tokens(file_summary_fallback(file_section, 300))
-            if token_counter.make_space(needed_tokens, ["base_prompt"]):
-                # Try again with the space we freed
-                success, tokens, added_text = token_counter.add_with_fallback(
-                    file_section,
-                    section_name=section_name,
-                    priority=priorities["file_summaries"] + 2,
-                    fallback_handler=file_summary_fallback
-                )
-                
-                if success:
-                    file_sections[file_path] = added_text
-                    included_files += 1
-                    if added_text != file_section:
-                        truncated_files += 1
-                else:
-                    skipped_files += 1
-            else:
-                skipped_files += 1
-    
-    # Second pass: try to include important files
-    for file_path in important_files + other_files:
-        # Check if we're approaching the token limit (leave room for instructions)
-        remaining_tokens = token_counter.get_remaining_tokens()
-        if remaining_tokens < 500:  # Reserve space for instructions
-            logger.info(f"Approaching token limit, stopping file inclusion. Remaining: {remaining_tokens}")
-            break
+        if file_path not in file_summaries:
+            continue
             
         summary = file_summaries[file_path]
-        file_section = f"## {file_path}\n{summary}\n\n"
-        section_name = f"file_{file_path}"
+        file_text = f"File: {file_path}\n{summary}\n\n"
         
-        # For non-essential files, use lower priority
-        priority = priorities["file_summaries"] + 1 if file_path in important_files else priorities["file_summaries"]
-        
-        # Try to add with fallback options
+        # Try to add to prompt with fallback handling
         success, tokens, added_text = token_counter.add_with_fallback(
-            file_section,
-            section_name=section_name,
-            priority=priority,
+            file_text, 
+            section_name=f"file_{file_path}",
+            priority=priorities["file_summaries"],
             fallback_handler=file_summary_fallback
         )
         
         if success:
-            file_sections[file_path] = added_text
-            included_files += 1
-            if added_text != file_section:
-                truncated_files += 1
+            prompt_sections[f"file_{file_path}"] = added_text
+            files_included += 1
+            if added_text != file_text:
+                files_truncated += 1
         else:
-            skipped_files += 1
+            files_skipped += 1
+            
+        # Check if we're approaching the token limit
+        if token_counter.get_remaining_tokens() < 3000:
+            logger.warning(f"Approaching token limit after essential files. Stopping file additions.")
+            break
     
-    # Combine all file sections in the original order they appeared
-    file_summaries_content = ""
-    for file_path in all_files_by_priority:
-        if file_path in file_sections:
-            file_summaries_content += file_sections[file_path]
+    # Then process standard files if we still have room
+    if token_counter.get_remaining_tokens() >= 3000:
+        for file_path in standard_files:
+            if file_path not in file_summaries:
+                continue
+                
+            summary = file_summaries[file_path]
+            file_text = f"File: {file_path}\n{summary}\n\n"
+            
+            # Try to add to prompt with fallback handling
+            success, tokens, added_text = token_counter.add_with_fallback(
+                file_text, 
+                section_name=f"file_{file_path}",
+                priority=priorities["file_summaries"],
+                fallback_handler=file_summary_fallback
+            )
+            
+            if success:
+                prompt_sections[f"file_{file_path}"] = added_text
+                files_included += 1
+                if added_text != file_text:
+                    files_truncated += 1
+            else:
+                files_skipped += 1
+                
+            # Check if we're approaching the token limit
+            if token_counter.get_remaining_tokens() < 3000:
+                logger.warning(f"Approaching token limit. Stopping file additions.")
+                break
     
-    prompt_sections["file_summaries"] = file_summaries_content
+    # Add tone instructions based on the selected tone
+    tone_instructions = ""
+    if tone == "professional":
+        tone_instructions = """
+TONE: Write in a professional, clear, and concise tone. Use technical language appropriately but ensure the README remains accessible to developers of various experience levels. Maintain a helpful, informative voice throughout.
+"""
+    elif tone == "startup":
+        tone_instructions = """
+TONE: Write in an energetic, modern startup tone that's friendly but still professional. Emphasize innovation and problem-solving. Use conversational language, occasional humor, and convey excitement about the project's potential while maintaining technical accuracy.
+"""
+    elif tone == "meme":
+        tone_instructions = """
+TONE: Write in a fun, meme-friendly tone that will appeal to developers who enjoy internet culture. Include appropriate emoji, clever headings, and occasional pop culture references. Keep the technical information accurate but present it in a lighthearted, engaging way that makes the README entertaining to read.
+"""
     
-    logger.info(f"Included {included_files} file summaries, truncated {truncated_files}, skipped {skipped_files} due to token limits")
-    
-    # Add tone instructions
-    tone_instructions = {
-        "professional": "Use a professional and straightforward tone that would appeal to enterprise developers.",
-        "startup": "Use an enthusiastic startup-like tone with emojis and modern language. Be energetic but still informative.",
-        "meme": "Use a humorous tone with internet memes and jokes, while still being informative and helpful to developers."
-    }
-    
-    # Add mode-specific instructions
-    mode_instructions = {
-        "standard": "Create a balanced README with all essential sections. Keep the total length under 1500 words.",
-        "detailed": "Create a comprehensive README with extensive documentation and detailed explanations. Include more examples and technical details.",
-        "concise": "Create a brief README with only the most important information, focusing on clarity and brevity. Keep it under 800 words.",
-        "creative": "Create an engaging and creative README that stands out while still being informative. Use metaphors, analogies or storytelling techniques where appropriate."
-    }
-    
-    # Add tone and style instructions
-    tone_section = f"\n\nTone: {tone_instructions.get(tone, tone_instructions['professional'])}"
-    success, _ = token_counter.add_to_prompt(
-        tone_section, 
+    # Add tone instructions if we have room
+    success, tone_tokens = token_counter.add_to_prompt(
+        tone_instructions,
         section_name="tone_instructions",
         priority=priorities["tone_instructions"]
     )
-    prompt_sections["tone_instructions"] = tone_section
+    if success:
+        prompt_sections["tone_instructions"] = tone_instructions
     
-    style_section = f"\n\nStyle: {mode_instructions.get(mode, mode_instructions['standard'])}"
-    success, _ = token_counter.add_to_prompt(
-        style_section, 
+    # Add style instructions based on the selected mode
+    style_instructions = ""
+    if mode == "standard":
+        style_instructions = """
+STYLE: Create a balanced README with all essential sections. Include enough detail to be helpful without overwhelming the reader. Focus on what makes this repository useful and how to get started quickly.
+"""
+    elif mode == "detailed":
+        style_instructions = """
+STYLE: Create a comprehensive README with extensive documentation. Include detailed explanations, examples, and thorough installation and usage instructions. Document architecture, design decisions, and advanced usage scenarios where appropriate.
+"""
+    elif mode == "concise":
+        style_instructions = """
+STYLE: Create a minimal README focused on the essentials. Keep it brief but informative. Prioritize quick start information and core features. Use bullet points and short paragraphs to maximize readability.
+"""
+    elif mode == "creative":
+        style_instructions = """
+STYLE: Create an engaging README with creative formatting and structure. Feel free to use novel section organization, diagrams, or presentation styles that help the content stand out while remaining informative and useful.
+"""
+    
+    # Add style instructions if we have room
+    success, style_tokens = token_counter.add_to_prompt(
+        style_instructions,
         section_name="style_instructions",
         priority=priorities["style_instructions"]
     )
-    prompt_sections["style_instructions"] = style_section
+    if success:
+        prompt_sections["style_instructions"] = style_instructions
     
-    # Add structure instructions with fallback options
-    full_structure_instructions = """
+    # Add structure instructions to enforce README format
+    structure_instructions = """
+STRUCTURE: Include the following sections in your README:
 
-Create a README.md with the following sections:
-1. Title and a compelling introduction explaining what the project does, who it is for, and what problem it solves.
-2. Features that highlight the key capabilities and benefits of the project.
-3. Installation instructions that are clear, concise, and complete.
-4. Usage examples that show developers how to use the project effectively.
-5. Project structure with a brief explanation of what each major folder/file does.
-6. License information (if available).
-7. Contributing guidelines (optional).
+1. Title and Description - Clear project name and concise description
+2. Features - Key capabilities and benefits
+3. Installation - Step-by-step instructions
+4. Usage - How to use the project with examples
+5. Configuration (if applicable)
+6. API Documentation (if applicable)
+7. Contributing (if applicable)
+8. License
 
-Additional guidelines:
-- Use proper Markdown formatting including headers, code blocks, lists, and emphasis where appropriate.
-- If any important library, tool, or dependency is clearly central to the project, mention it in the introduction or Features section.
-- Avoid repeating content from one section in another unless necessary.
-- Do not invent features or sections that are not supported by the provided summaries.
-- Write as if a human developer who deeply understands the project is explaining it to a colleague.
+Format the README using proper Markdown syntax, including headers, code blocks, lists, and links.
 """
     
-    medium_structure_instructions = """
-
-Create a README.md with the following sections:
-1. Title and introduction explaining what the project does and what problem it solves.
-2. Key features and benefits.
-3. Installation instructions.
-4. Basic usage examples.
-5. Brief project structure overview.
-6. License information (if available).
-
-Use proper Markdown formatting and focus on clarity and accuracy.
-"""
+    # Add structure instructions if we have room
+    success, structure_tokens = token_counter.add_to_prompt(
+        structure_instructions,
+        section_name="structure_instructions",
+        priority=priorities["structure_instructions"]
+    )
+    if success:
+        prompt_sections["structure_instructions"] = structure_instructions
     
-    minimal_structure_instructions = """
-
-Create a README.md with:
-1. Title and brief introduction
-2. Key features
-3. Installation instructions
-4. Basic usage
-5. License (if available)
-
-Use proper Markdown formatting.
-"""
+    # Final instruction
+    final_instruction = "\nNow, write a complete README.md for this repository:\n"
+    token_counter.add_to_prompt(final_instruction)
     
-    # Try to add structure instructions with fallbacks based on available tokens
-    structure_section = ""
-    if token_counter.will_fit(full_structure_instructions)[0]:
-        success, _ = token_counter.add_to_prompt(
-            full_structure_instructions, 
-            section_name="structure_instructions",
-            priority=priorities["structure_instructions"]
-        )
-        structure_section = full_structure_instructions
-    elif token_counter.will_fit(medium_structure_instructions)[0]:
-        success, _ = token_counter.add_to_prompt(
-            medium_structure_instructions, 
-            section_name="structure_instructions",
-            priority=priorities["structure_instructions"]
-        )
-        structure_section = medium_structure_instructions
-    else:
-        success, _ = token_counter.add_to_prompt(
-            minimal_structure_instructions, 
-            section_name="structure_instructions",
-            priority=priorities["structure_instructions"]
-        )
-        structure_section = minimal_structure_instructions
-    
-    prompt_sections["structure_instructions"] = structure_section
-    
-    # Build the final prompt by combining all sections
+    # Assemble the final prompt
     final_prompt = ""
-    for section_name in ["base_prompt", "file_summaries_header", "file_summaries", 
-                         "tone_instructions", "style_instructions", "structure_instructions"]:
+    for section_name in ["base_prompt", "file_summaries_header"]:
         if section_name in prompt_sections:
             final_prompt += prompt_sections[section_name]
     
-    # Collect token usage metadata with enhanced information
+    # Add file summaries
+    for section_name in prompt_sections:
+        if section_name.startswith("file_"):
+            final_prompt += prompt_sections[section_name]
+    
+    # Add instructions
+    for section_name in ["tone_instructions", "style_instructions", "structure_instructions"]:
+        if section_name in prompt_sections:
+            final_prompt += prompt_sections[section_name]
+    
+    # Add final instruction
+    final_prompt += final_instruction
+    
+    # Get token counter stats
+    section_stats = token_counter.get_section_stats()
+    
+    # Create token metadata
     token_metadata = {
         "prompt_tokens": token_counter.current_count,
-        "max_tokens": token_counter.max_tokens,
         "available_tokens": token_counter.available_tokens,
         "remaining_tokens": token_counter.get_remaining_tokens(),
         "usage_percentage": token_counter.get_usage_percentage(),
-        "included_files": included_files,
-        "truncated_files": truncated_files,
-        "skipped_files": skipped_files,
-        "section_stats": token_counter.get_section_stats()
+        "included_files": files_included,
+        "truncated_files": files_truncated,
+        "skipped_files": files_skipped,
+        "section_stats": section_stats
     }
     
     return final_prompt, token_metadata

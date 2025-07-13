@@ -8,13 +8,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Token estimation constants
-CHARS_PER_TOKEN = 4.5  # Increased from 4 to 4.5 for less conservative estimation
-MAX_TOKENS_PER_REQUEST = 16000  # Increased from 8192 to account for newer models
-PROMPT_OVERHEAD = 800  # Reduced from 1000 to allow more content
-MAX_SAFE_FILES = 25  # Increased from 20 to allow more files
+CHARS_PER_TOKEN = 4.5  # Chars per token estimation
+MAX_TOKENS_PER_REQUEST = 128000  # Updated for GPT-4 Turbo 128k context
+PROMPT_OVERHEAD = 1000  # Base overhead for prompt structure
+MAX_SAFE_FILES = 100  # Increased for larger context window
 
 # Minimum number of important files to include regardless of token budget
-MIN_FILES_TO_INCLUDE = 3
+MIN_FILES_TO_INCLUDE = 5  # Increased from 3
 
 def count_files_in_repo(repo_path: str) -> int:
     """
@@ -55,7 +55,7 @@ def estimate_tokens_for_file(file_path: str) -> int:
     except Exception as e:
         logger.warning(f"Error estimating tokens for {file_path}: {e}")
         # Return a conservative estimate for files we can't read
-        return 500  # Reduced from 1000 to be less conservative
+        return 500
 
 def calculate_dynamic_max_files(repo_path: str) -> int:
     """
@@ -69,13 +69,13 @@ def calculate_dynamic_max_files(repo_path: str) -> int:
     """
     file_count = count_files_in_repo(repo_path)
     
-    # Dynamic scaling based on repository size
+    # Dynamic scaling based on repository size - increased for larger context
     if file_count <= 50:
-        return 5  # Small repo: 5 files
+        return 15  # Small repo: 15 files (was 5)
     elif file_count <= 200:
-        return 10  # Medium repo: 10 files
+        return 30  # Medium repo: 30 files (was 10)
     else:
-        return 15  # Large repo: 15 files
+        return 50  # Large repo: 50 files (was 15)
 
 def select_files_with_budget(
     repo_path: str, 
@@ -125,6 +125,10 @@ def select_files_with_budget(
             tokens_used += file_tokens
             logger.info(f"Including essential file {file_info['path']} with {file_tokens} tokens")
     
+    # Reserve space for README generation - ensure we have at least 2000 tokens available
+    # for the response even if we use the entire context window
+    remaining_budget = max(max_token_budget - tokens_used - 2000, 0)
+    
     # Then process remaining files within budget
     for file_info in sorted_files[min_files_to_process:]:
         file_path = os.path.join(repo_path, file_info["path"])
@@ -133,7 +137,7 @@ def select_files_with_budget(
         file_tokens = estimate_tokens_for_file(file_path)
         
         # Check if adding this file would exceed our budget
-        if tokens_used + file_tokens > max_token_budget:
+        if tokens_used + file_tokens > remaining_budget:
             logger.info(f"Skipping {file_info['path']} - would exceed token budget (est. {file_tokens} tokens)")
             continue
             

@@ -1,126 +1,178 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
-from typing import Optional, Dict, List
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 import logging
+from typing import Dict, List, Optional, Any
+import asyncio
 
+from ..config import AVAILABLE_MODELS, GENERATION_MODES, DEFAULT_REPO_URL
 from ..services.generate import generate_readme_for_repo
-from ..config import AVAILABLE_MODELS, GENERATION_MODES
-from ..models.readme import (
-    GenerateRequest, GenerateResponse, 
-    ModelInfo, ModeInfo, 
-    ModelsResponse, ModesResponse,
-    ReadmeTone, GenerationMode,
-    FilePreview, ProcessingMetadata
-)
+from ..services.advanced_generate import AdvancedReadmeGenerator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create API router
 router = APIRouter()
 
-@router.post("/generate", response_model=GenerateResponse)
-def generate_readme(request: GenerateRequest):
-    """
-    Generate a README for a GitHub repository
-    """
+@router.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy"}
+
+@router.get("/models")
+async def get_models() -> Dict[str, Any]:
+    """Get available models"""
+    return {
+        "models": [
+            {
+                "id": model_id,
+                "name": model_info["name"],
+                "description": model_info["description"]
+            }
+            for model_id, model_info in AVAILABLE_MODELS.items()
+        ]
+    }
+
+@router.get("/modes")
+async def get_modes() -> Dict[str, Any]:
+    """Get available generation modes"""
+    return {
+        "modes": [
+            {
+                "id": mode_id,
+                "name": mode_info["name"],
+                "description": mode_info["description"]
+            }
+            for mode_id, mode_info in GENERATION_MODES.items()
+        ]
+    }
+
+@router.post("/generate")
+async def generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate a README for a GitHub repository"""
+    repo_url = request.get("repo_url", DEFAULT_REPO_URL)
+    tone = request.get("tone", "professional")
+    model = request.get("model", "gpt-4")
+    mode = request.get("mode", "standard")
+    max_files = request.get("max_files")
+    
+    logger.info(f"Received request to generate README for: {repo_url}")
+    
     try:
-        logger.info(f"Received request to generate README for: {request.repo_url}")
-        
-        # Validate model
-        if request.model not in AVAILABLE_MODELS:
-            logger.warning(f"Invalid model: {request.model}, using default")
-            request.model = "gpt-4"
-            
-        # Validate mode
-        if request.mode not in [mode.value for mode in GenerationMode]:
-            logger.warning(f"Invalid mode: {request.mode}, using default")
-            request.mode = GenerationMode.STANDARD
-        
-        # Call the service to generate the README
         result = generate_readme_for_repo(
-            repo_url=str(request.repo_url),
-            tone=request.tone.value,
-            model=request.model,
-            mode=request.mode,
-            max_files=request.max_files
+            repo_url=repo_url,
+            tone=tone,
+            model=model,
+            mode=mode,
+            max_files=max_files
         )
-        
-        # Extract file preview and processing metadata if available
-        file_preview = None
-        processing_metadata = None
-        
-        if result["success"] and "metadata" in result:
-            # Extract file preview
-            if "file_preview" in result["metadata"]:
-                file_preview = [
-                    FilePreview(path=item["path"], preview=item["preview"])
-                    for item in result["metadata"]["file_preview"]
-                ]
-            
-            # Extract processing metadata
-            if "processing" in result["metadata"]:
-                proc_data = result["metadata"]["processing"]
-                processing_metadata = ProcessingMetadata(
-                    total_prompt_tokens=proc_data.get("total_prompt_tokens", 0),
-                    total_completion_tokens=proc_data.get("total_completion_tokens", 0),
-                    total_tokens=proc_data.get("total_tokens", 0),
-                    chunk_errors=proc_data.get("chunk_errors", 0),
-                    error_details=proc_data.get("error_details")
-                )
-        
-        # Create response
-        response = GenerateResponse(
-            success=result["success"],
-            readme=result["readme"],
-            metadata=result.get("metadata"),
-            error=result.get("error"),
-            file_preview=file_preview,
-            processing_metadata=processing_metadata
-        )
-        
-        return response
+        return result
     except Exception as e:
-        logger.error(f"Error in generate endpoint: {e}")
+        logger.error(f"Error generating README: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/models", response_model=ModelsResponse)
-def get_available_models():
-    """
-    Get available models for README generation
-    """
-    models = []
-    for model_id, model_data in AVAILABLE_MODELS.items():
-        models.append(
-            ModelInfo(
-                id=model_id,
-                name=model_data["name"],
-                description=model_data["description"],
-                max_tokens=model_data["max_tokens"]
-            )
+@router.post("/advanced-generate")
+async def advanced_generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate a README using advanced strategies"""
+    repo_url = request.get("repo_url", DEFAULT_REPO_URL)
+    tone = request.get("tone", "professional")
+    model = request.get("model", "gpt-4-1106-preview")
+    max_files = request.get("max_files")
+    
+    logger.info(f"Received request for advanced README generation for: {repo_url}")
+    
+    try:
+        # First get repository understanding and file summaries using the standard method
+        result = generate_readme_for_repo(
+            repo_url=repo_url,
+            tone=tone,
+            model="gpt-3.5-turbo",  # Use faster model for initial analysis
+            mode="standard",
+            max_files=max_files
         )
-    return {"models": models}
-
-@router.get("/modes", response_model=ModesResponse)
-def get_generation_modes():
-    """
-    Get available generation modes
-    """
-    modes = []
-    for mode_id, mode_data in GENERATION_MODES.items():
-        modes.append(
-            ModeInfo(
-                id=mode_id,
-                name=mode_data["name"],
-                description=mode_data["description"],
-                temperature=mode_data["temperature"]
-            )
+        
+        if not result["success"]:
+            return result
+            
+        # Extract repository understanding and file summaries
+        repo_understanding = result["metadata"].get("repo_understanding", "")
+        file_summaries = {file_path: summary for file_path, summary in 
+                         zip(result["metadata"].get("included_files", []), 
+                             result["metadata"].get("file_summaries", []))}
+        
+        # Use advanced generator
+        generator = AdvancedReadmeGenerator(model=model)
+        readme_content = await generator.generate_readme(
+            repo_url=repo_url,
+            repo_understanding=repo_understanding,
+            file_summaries=file_summaries,
+            tone=tone
         )
-    return {"modes": modes}
+        
+        # Return the result
+        return {
+            "success": True,
+            "readme": readme_content,
+            "metadata": {
+                **result["metadata"],
+                "generation_method": "advanced",
+                "model": model
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in advanced README generation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/health")
-def health_check():
-    """
-    Health check endpoint
-    """
-    return {"status": "healthy"}
+@router.post("/stream-generate")
+async def stream_generate_readme(request: Request) -> StreamingResponse:
+    """Generate a README with streaming output"""
+    # Parse the request body
+    body = await request.json()
+    repo_url = body.get("repo_url", DEFAULT_REPO_URL)
+    tone = body.get("tone", "professional")
+    model = body.get("model", "gpt-4-1106-preview")
+    max_files = body.get("max_files")
+    
+    logger.info(f"Received request for streaming README generation for: {repo_url}")
+    
+    async def generate_stream():
+        try:
+            # First get repository understanding and file summaries using the standard method
+            result = generate_readme_for_repo(
+                repo_url=repo_url,
+                tone=tone,
+                model="gpt-3.5-turbo",  # Use faster model for initial analysis
+                mode="standard",
+                max_files=max_files
+            )
+            
+            if not result["success"]:
+                yield f"Error: {result.get('error', 'Unknown error')}"
+                return
+                
+            # Extract repository understanding and file summaries
+            repo_understanding = result["metadata"].get("repo_understanding", "")
+            file_summaries = {file_path: summary for file_path, summary in 
+                             zip(result["metadata"].get("included_files", []), 
+                                 result["metadata"].get("file_summaries", []))}
+            
+            # Use advanced generator with streaming
+            generator = AdvancedReadmeGenerator(model=model)
+            async for chunk in generator.stream_generate_readme(
+                repo_url=repo_url,
+                repo_understanding=repo_understanding,
+                file_summaries=file_summaries,
+                tone=tone
+            ):
+                yield chunk
+                # Small delay to avoid overwhelming the client
+                await asyncio.sleep(0.1)
+                
+        except Exception as e:
+            logger.error(f"Error in streaming README generation: {e}")
+            yield f"Error: {str(e)}"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain"
+    )

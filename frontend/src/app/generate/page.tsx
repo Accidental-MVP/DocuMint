@@ -6,7 +6,9 @@ import { GenerationSettings, ToneOption, ModelOption, ModeOption } from '@/compo
 import { ReadmePreview } from '@/components/repository/readme-preview';
 import { TokenUsage } from '@/components/repository/token-usage';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FileText, Settings2, BarChart } from 'lucide-react';
+import { FileText, Settings2, BarChart, AlertCircle } from 'lucide-react';
+import { generateReadme, getAvailableModels, getGenerationModes, checkApiHealth } from '@/lib/api/client';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function GeneratePage() {
   // Use null as initial state to prevent hydration mismatch
@@ -29,71 +31,63 @@ export default function GeneratePage() {
     filesSkipped: 0,
     filesTruncated: 0
   });
+  const [error, setError] = useState<string | null>(null);
+  const [apiHealthy, setApiHealthy] = useState<boolean | null>(null);
   
   // Set initial state after component mounts to avoid hydration mismatch
   useEffect(() => {
     setActiveTab('input');
+    
+    // Check API health on component mount
+    const checkHealth = async () => {
+      const isHealthy = await checkApiHealth();
+      setApiHealthy(isHealthy);
+    };
+    
+    checkHealth();
   }, []);
 
   const handleSubmit = async (url: string) => {
     setIsLoading(true);
     setRepoUrl(url);
+    setError(null);
     
     try {
-      // In a real app, this would be an API call to your backend
-      // For now, we'll simulate a response after a delay
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      const response = await generateReadme({
+        repo_url: url,
+        tone: settings.tone,
+        model: settings.model,
+        mode: settings.mode,
+        max_files: 50 // Optional limit
+      });
       
-      // Sample README content
-      const sampleReadme = `# ${url.split('/').pop()?.replace('.git', '') || 'Repository'}
-
-## Overview
-This is an AI-generated README for your project. It provides an overview of your repository structure, features, and usage instructions.
-
-## Features
-- Feature 1: Description of feature 1
-- Feature 2: Description of feature 2
-- Feature 3: Description of feature 3
-
-## Installation
-\`\`\`bash
-npm install your-package-name
-\`\`\`
-
-## Usage
-\`\`\`javascript
-import { someFunction } from 'your-package-name';
-
-// Example usage
-someFunction();
-\`\`\`
-
-## Project Structure
-- /src - Source code
-- /tests - Test files
-- /docs - Documentation
-
-## License
-MIT
-`;
-      
-      // Sample token usage data
-      const sampleTokenUsage = {
-        promptTokens: 3245,
-        completionTokens: 512,
-        totalTokens: 3757,
-        maxTokens: 8192,
-        usagePercentage: 45.9,
-        filesIncluded: 12,
-        filesSkipped: 3,
-        filesTruncated: 2
-      };
-      
-      setReadmeContent(sampleReadme);
-      setTokenUsage(sampleTokenUsage);
-      setActiveTab('preview');
+      if (response.success) {
+        setReadmeContent(response.readme);
+        
+        // Extract token usage data from response
+        if (response.processing_metadata) {
+          const metadata = response.processing_metadata;
+          const maxTokens = settings.model === 'gpt-4' ? 8192 : 4096;
+          
+          setTokenUsage({
+            promptTokens: metadata.total_prompt_tokens,
+            completionTokens: metadata.total_completion_tokens,
+            totalTokens: metadata.total_tokens,
+            maxTokens: maxTokens,
+            usagePercentage: (metadata.total_tokens / maxTokens) * 100,
+            filesIncluded: response.metadata?.files_included || 0,
+            filesSkipped: response.metadata?.files_skipped || 0,
+            filesTruncated: response.metadata?.files_truncated || 0
+          });
+        }
+        
+        setActiveTab('preview');
+      } else {
+        setError(response.error || 'Failed to generate README');
+      }
     } catch (error) {
       console.error('Error generating README:', error);
+      setError('An unexpected error occurred. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -107,6 +101,24 @@ MIT
   return (
     <div className="container mx-auto py-8 px-4">
       <h1 className="text-3xl font-bold mb-8 text-center">Generate README</h1>
+      
+      {apiHealthy === false && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>API Connection Error</AlertTitle>
+          <AlertDescription>
+            Cannot connect to the API server. Please check that the backend is running and try again.
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {error && (
+        <Alert variant="destructive" className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
       
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full mb-8">
         <TabsList className="grid w-full grid-cols-3 mb-8">

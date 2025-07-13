@@ -4,11 +4,13 @@ import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { Sparkles, FileText, Settings2, Code, Zap } from 'lucide-react'
+import { Sparkles, FileText, Settings2, Code, Zap, Loader2 } from 'lucide-react'
+import { getAvailableModels, getGenerationModes, ModelInfo, ModeInfo } from '@/lib/api/client'
+import { ReadmeTone, GenerationMode } from '@/lib/api/client'
 
-export type ToneOption = 'professional' | 'startup' | 'meme'
-export type ModelOption = 'gpt-4' | 'gpt-3.5-turbo'
-export type ModeOption = 'standard' | 'detailed' | 'concise' | 'creative'
+export type ToneOption = ReadmeTone
+export type ModelOption = string
+export type ModeOption = GenerationMode
 
 interface GenerationSettingsProps {
   onSettingsChange: (settings: {
@@ -33,9 +35,37 @@ export function GenerationSettings({
 }: GenerationSettingsProps) {
   const [settings, setSettings] = useState(defaultSettings)
   const [isMounted, setIsMounted] = useState(false)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [modes, setModes] = useState<ModeInfo[]>([])
+  const [isLoading, setIsLoading] = useState(false)
   
   useEffect(() => {
     setIsMounted(true)
+    
+    // Fetch models and modes from API
+    const fetchData = async () => {
+      setIsLoading(true)
+      try {
+        const [modelsData, modesData] = await Promise.all([
+          getAvailableModels(),
+          getGenerationModes()
+        ])
+        
+        if (modelsData.length > 0) {
+          setModels(modelsData)
+        }
+        
+        if (modesData.length > 0) {
+          setModes(modesData)
+        }
+      } catch (error) {
+        console.error('Error fetching models or modes:', error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    
+    fetchData()
   }, [])
 
   const updateSettings = (key: keyof typeof settings, value: string) => {
@@ -47,8 +77,8 @@ export function GenerationSettings({
     onSettingsChange(newSettings as any)
   }
 
-  // Simple placeholder during SSR
-  if (!isMounted) {
+  // Simple placeholder during SSR or loading
+  if (!isMounted || isLoading) {
     return (
       <Card>
         <CardHeader>
@@ -61,7 +91,10 @@ export function GenerationSettings({
           </CardDescription>
         </CardHeader>
         <CardContent className="h-[300px] flex items-center justify-center">
-          <p>Loading settings...</p>
+          <div className="flex flex-col items-center gap-2">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p>Loading settings...</p>
+          </div>
         </CardContent>
       </Card>
     )
@@ -113,20 +146,36 @@ export function GenerationSettings({
             className="w-full"
           >
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="gpt-4" className="flex items-center gap-1">
-                <Sparkles className="h-4 w-4" />
-                GPT-4
-              </TabsTrigger>
-              <TabsTrigger value="gpt-3.5-turbo" className="flex items-center gap-1">
-                <Code className="h-4 w-4" />
-                GPT-3.5 Turbo
-              </TabsTrigger>
+              {models.length > 0 ? (
+                models.map(model => (
+                  <TabsTrigger 
+                    key={model.id} 
+                    value={model.id} 
+                    className="flex items-center gap-1"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {model.name}
+                  </TabsTrigger>
+                ))
+              ) : (
+                <>
+                  <TabsTrigger value="gpt-4" className="flex items-center gap-1">
+                    <Sparkles className="h-4 w-4" />
+                    GPT-4
+                  </TabsTrigger>
+                  <TabsTrigger value="gpt-3.5-turbo" className="flex items-center gap-1">
+                    <Code className="h-4 w-4" />
+                    GPT-3.5 Turbo
+                  </TabsTrigger>
+                </>
+              )}
             </TabsList>
           </Tabs>
           <p className="text-xs text-muted-foreground mt-1">
-            {settings.model === 'gpt-4' 
-              ? 'Most powerful model, best for complex README generation' 
-              : 'Faster and more cost-effective model'}
+            {models.find(m => m.id === settings.model)?.description || 
+              (settings.model === 'gpt-4' 
+                ? 'Most powerful model, best for complex README generation' 
+                : 'Faster and more cost-effective model')}
           </p>
         </div>
 
@@ -139,12 +188,25 @@ export function GenerationSettings({
             className="w-full"
           >
             <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="standard">Standard</TabsTrigger>
-              <TabsTrigger value="detailed">Detailed</TabsTrigger>
-              <TabsTrigger value="concise">Concise</TabsTrigger>
-              <TabsTrigger value="creative">Creative</TabsTrigger>
+              {modes.length > 0 ? (
+                modes.map(mode => (
+                  <TabsTrigger key={mode.id} value={mode.id}>
+                    {mode.name}
+                  </TabsTrigger>
+                ))
+              ) : (
+                <>
+                  <TabsTrigger value="standard">Standard</TabsTrigger>
+                  <TabsTrigger value="detailed">Detailed</TabsTrigger>
+                  <TabsTrigger value="concise">Concise</TabsTrigger>
+                  <TabsTrigger value="creative">Creative</TabsTrigger>
+                </>
+              )}
             </TabsList>
           </Tabs>
+          <p className="text-xs text-muted-foreground mt-1">
+            {modes.find(m => m.id === settings.mode)?.description || ''}
+          </p>
         </div>
       </CardContent>
     </Card>

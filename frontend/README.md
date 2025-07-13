@@ -78,10 +78,19 @@ documint/
    npm install
    ```
 
-3. Run the development server:
+3. Create a `.env.local` file in the frontend directory with the following content:
+   ```
+   NEXT_PUBLIC_API_URL=http://localhost:8000/api
+   ```
+
+   This configures the frontend to connect to the backend API. Adjust the URL if your backend is running on a different host or port.
+
+4. Run the development server:
    ```
    npm run dev
    ```
+
+5. Open [http://localhost:3000](http://localhost:3000) in your browser to view the application.
 
 ## API Endpoints
 
@@ -113,7 +122,16 @@ This approach allows DocuMint to:
 The project uses environment variables for configuration. These are stored in `.env` files which are not committed to the repository for security reasons.
 
 - Backend: Copy `backend/env.example` to `backend/.env` and fill in your API keys
-- Frontend: Create a `.env.local` file in the frontend directory if needed
+- Frontend: Create a `.env.local` file in the frontend directory with the API URL as shown above
+
+### Connecting Frontend to Backend
+
+The frontend and backend are designed to work together:
+
+1. The backend should be running on http://localhost:8000 by default
+2. The frontend connects to the backend API at the URL specified in NEXT_PUBLIC_API_URL
+3. API health checks are performed when the frontend loads to ensure connectivity
+4. If the backend is not available, appropriate error messages will be displayed
 
 ### Git Ignore
 

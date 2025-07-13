@@ -1,36 +1,129 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DocuMint
+
+AI-powered README generator for GitHub repositories. Paste a GitHub link, get a beautiful README.
+
+## Features
+
+- Generate comprehensive READMEs from GitHub repositories
+- Multiple tone options (professional, startup, meme)
+- Analyze repository structure and extract key information
+- Handle large repositories with advanced chunking system
+- Generate additional documentation (coming soon)
+
+## Project Structure
+
+```
+documint/
+├── frontend/               # Next.js frontend
+│   └── src/                # Frontend source code
+│
+├── backend/                # FastAPI backend
+│   ├── app/
+│   │   ├── main.py         # FastAPI entry point
+│   │   ├── api/            # API routes
+│   │   ├── services/       # Business logic
+│   │   ├── utils/          # Utilities
+│   │   │   ├── chunker.py  # File chunking system
+│   │   │   ├── reader.py   # Context-aware code reader
+│   │   │   ├── parser.py   # Repository parser
+│   │   │   └── llm.py      # LLM interface
+│   │   └── config.py       # Configuration
+│   └── requirements.txt    # Python dependencies
+│
+├── scripts/                # Development scripts
+└── docs/                   # Documentation
+```
 
 ## Getting Started
 
-First, run the development server:
+### Backend Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Navigate to the backend directory:
+   ```
+   cd backend
+   ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Create a virtual environment:
+   ```
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Create a `.env` file in the backend directory by copying the example:
+   ```
+   copy env.example .env  # On Unix: cp env.example .env
+   ```
 
-## Learn More
+5. Edit the `.env` file to add your OpenAI API key.
 
-To learn more about Next.js, take a look at the following resources:
+6. Run the FastAPI server:
+   ```
+   python -m app.main
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Frontend Setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. Navigate to the frontend directory:
+   ```
+   cd frontend
+   ```
 
-## Deploy on Vercel
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+3. Run the development server:
+   ```
+   npm run dev
+   ```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## API Endpoints
+
+- `POST /api/generate` - Generate a README for a GitHub repository
+- `GET /api/models` - Get available LLM models
+- `GET /api/modes` - Get available generation modes
+- `GET /api/health` - Health check endpoint
+
+## Advanced Features
+
+### Chunking System
+
+DocuMint uses an advanced chunking system to handle repositories of any size:
+
+1. **File Chunking**: Large files are broken into smaller chunks with overlap for context
+2. **Context-Aware Reading**: Each chunk is processed while maintaining context from previous chunks
+3. **Repository Understanding**: File summaries are combined to create a comprehensive understanding
+4. **Intelligent README Generation**: The final README is generated based on the repository understanding
+
+This approach allows DocuMint to:
+- Handle repositories of any size without token limit issues
+- Maintain context and understanding across large files
+- Generate more accurate and comprehensive READMEs
+
+## Development Notes
+
+### Environment Variables
+
+The project uses environment variables for configuration. These are stored in `.env` files which are not committed to the repository for security reasons.
+
+- Backend: Copy `backend/env.example` to `backend/.env` and fill in your API keys
+- Frontend: Create a `.env.local` file in the frontend directory if needed
+
+### Git Ignore
+
+The `.gitignore` file is set up to exclude:
+- Environment files (`.env`, `.env.local`, etc.)
+- Python cache and virtual environments
+- Node.js modules and build artifacts
+- Temporary repository storage
+- IDE files and logs
+
+## License
+
+MIT

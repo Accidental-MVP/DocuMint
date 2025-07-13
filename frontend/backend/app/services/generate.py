@@ -55,10 +55,22 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         
         # Generate repository understanding
         logger.info("Generating repository understanding")
-        repo_understanding = reader.generate_repository_understanding(file_summaries)
+        # Use GPT-4 Turbo for the final repository understanding to handle larger context
+        understanding_reader = ContextAwareReader(model="gpt-4-1106-preview")
+        repo_understanding = understanding_reader.generate_repository_understanding(file_summaries)
         
-        # Get processing metadata
+        # Combine processing metadata
         processing_metadata = reader.get_processing_metadata()
+        understanding_metadata = understanding_reader.get_processing_metadata()
+        processing_metadata["total_prompt_tokens"] += understanding_metadata["total_prompt_tokens"]
+        processing_metadata["total_completion_tokens"] += understanding_metadata["total_completion_tokens"]
+        processing_metadata["total_tokens"] += understanding_metadata["total_tokens"]
+        if understanding_metadata["chunk_errors"]:
+            processing_metadata["chunk_errors"] += understanding_metadata["chunk_errors"]
+            if understanding_metadata["error_details"]:
+                if not processing_metadata.get("error_details"):
+                    processing_metadata["error_details"] = []
+                processing_metadata["error_details"].extend(understanding_metadata["error_details"])
         
         # Get model and mode settings
         model_settings = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["gpt-4-1106-preview"])
@@ -83,6 +95,11 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         if max_tokens < 2000:
             logger.warning(f"Remaining tokens ({max_tokens}) is too small, using minimum of 2000")
             max_tokens = 2000
+            
+        # Cap max_tokens for GPT-4 Turbo to respect the completion token limit
+        if model == "gpt-4-1106-preview" and max_tokens > 4000:
+            logger.info(f"Capping max_tokens from {max_tokens} to 4000 for {model} due to completion token limit")
+            max_tokens = 4000
         
         logger.info(f"Using max_tokens={max_tokens} for README generation")
         
@@ -186,10 +203,13 @@ def _build_prompt(repo_url: str, repo_understanding: str, file_summaries: Dict[s
         tuple[str, Dict]: (Prompt for the LLM, Token metadata)
     """
     # Initialize token counter with appropriate model and buffer
+    # For GPT-4 Turbo, use the maximum completion token limit as the buffer
+    buffer = 4096 if model_name == "gpt-4-1106-preview" else 2000
+    
     token_counter = TokenCounter(
         model_name=model_name,
         max_tokens=model_max_tokens,
-        buffer=2000  # Increased buffer for the response
+        buffer=buffer
     )
     
     # Extract repo name from URL

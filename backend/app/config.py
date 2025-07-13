@@ -15,20 +15,25 @@ APP_VERSION = "0.1.0"
 GITHUB_TEMP_DIR = os.getenv("GITHUB_TEMP_DIR", "./temp_repos")
 
 # LLM settings
-DEFAULT_MODEL = "gpt-4"
+DEFAULT_MODEL = "gpt-4-1106-preview"
 DEFAULT_TEMPERATURE = 0.3
 DEFAULT_MAX_TOKENS = 4000
 
 # Available models
 AVAILABLE_MODELS = {
+    "gpt-4-1106-preview": {
+        "name": "GPT-4 Turbo (128k)",
+        "max_tokens": 128000,
+        "description": "Massive context, perfect for large-scale README generation"
+    },
     "gpt-4": {
         "name": "GPT-4",
         "max_tokens": 8192,
-        "description": "Most powerful model, best for complex README generation"
+        "description": "Powerful model for complex README generation"
     },
     "gpt-3.5-turbo": {
         "name": "GPT-3.5 Turbo",
-        "max_tokens": 4096,
+        "max_tokens": 16385,
         "description": "Faster and more cost-effective model"
     }
 }

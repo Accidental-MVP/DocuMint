@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Constants for context management
-MAX_CONTEXT_CHUNKS = 3  # Maximum number of previous chunks to keep in context
-MAX_CONTEXT_TOKENS = 14000  # Maximum tokens for context (leaving room for response)
+MAX_CONTEXT_CHUNKS = 5  # Increased from 3 to take advantage of larger context window
+MAX_CONTEXT_TOKENS = 32000  # Increased from 14000 to take advantage of larger context window
 
 class ContextAwareReader:
     """
@@ -164,12 +164,18 @@ Continue building your understanding of this file based on what you've seen so f
         self._manage_context_window(file_path, new_messages)
         
         try:
+            # Determine appropriate max_tokens based on model
+            max_tokens = 1000
+            if self.model == "gpt-4-1106-preview":
+                # Cap max_tokens for GPT-4 Turbo
+                max_tokens = 4000
+                
             # Call OpenAI API
             response = client.chat.completions.create(
                 model=self.model,
                 messages=self.conversation_histories[file_path],
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=max_tokens
             )
             
             # Track token usage
@@ -301,6 +307,12 @@ Continue building your understanding of this file based on what you've seen so f
             user_message += f"## {file_path}\n{summary}\n\n"
         
         try:
+            # Determine appropriate max_tokens based on model
+            max_tokens = 2000
+            if self.model == "gpt-4-1106-preview":
+                # Cap max_tokens for GPT-4 Turbo
+                max_tokens = 4000
+                
             # Call OpenAI API
             response = client.chat.completions.create(
                 model=self.model,
@@ -309,7 +321,7 @@ Continue building your understanding of this file based on what you've seen so f
                     {"role": "user", "content": user_message}
                 ],
                 temperature=0.3,
-                max_tokens=2000
+                max_tokens=max_tokens
             )
             
             # Track token usage

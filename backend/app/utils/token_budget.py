@@ -8,13 +8,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Token estimation constants
-CHARS_PER_TOKEN = 4.5  # Increased from 4 to 4.5 for less conservative estimation
-MAX_TOKENS_PER_REQUEST = 16000  # Increased from 8192 to account for newer models
-PROMPT_OVERHEAD = 800  # Reduced from 1000 to allow more content
-MAX_SAFE_FILES = 25  # Increased from 20 to allow more files
+CHARS_PER_TOKEN = 4.5  # Chars per token estimation
+MAX_TOKENS_PER_REQUEST = 128000  # Total context window for GPT-4 Turbo
+MAX_COMPLETION_TOKENS = 4096  # Hard limit on completion tokens for GPT-4 Turbo
+AVAILABLE_PROMPT_TOKENS = MAX_TOKENS_PER_REQUEST - MAX_COMPLETION_TOKENS  # ~123,904 tokens for prompt
+PROMPT_OVERHEAD = 1000  # Base overhead for prompt structure
+MAX_SAFE_FILES = 100  # Maximum number of files to process
 
 # Minimum number of important files to include regardless of token budget
-MIN_FILES_TO_INCLUDE = 3
+MIN_FILES_TO_INCLUDE = 5  # Ensure we include at least this many files
 
 def count_files_in_repo(repo_path: str) -> int:
     """
@@ -69,18 +71,18 @@ def calculate_dynamic_max_files(repo_path: str) -> int:
     """
     file_count = count_files_in_repo(repo_path)
     
-    # Dynamic scaling based on repository size
+    # Dynamic scaling based on repository size with higher limits for larger context
     if file_count <= 50:
-        return 5  # Small repo: 5 files
+        return 10  # Small repo: 10 files (increased from 5)
     elif file_count <= 200:
-        return 10  # Medium repo: 10 files
+        return 25  # Medium repo: 25 files (increased from 10)
     else:
-        return 15  # Large repo: 15 files
+        return 50  # Large repo: 50 files (increased from 15)
 
 def select_files_with_budget(
     repo_path: str, 
     scored_files: List[Dict], 
-    max_token_budget: int = MAX_TOKENS_PER_REQUEST - PROMPT_OVERHEAD,
+    max_token_budget: int = AVAILABLE_PROMPT_TOKENS - PROMPT_OVERHEAD,
     client_max_files: Optional[int] = None
 ) -> Tuple[List[str], int]:
     """

@@ -28,6 +28,12 @@ def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
         if not OPENAI_API_KEY:
             logger.warning("No OpenAI API key found. Using mock README.")
             return _get_mock_readme()
+        
+        # Cap max_tokens to avoid API errors
+        # GPT-4 Turbo has a limit of 4096 completion tokens
+        if model == "gpt-4-1106-preview" and max_tokens > 4000:
+            logger.info(f"Capping max_tokens from {max_tokens} to 4000 for {model}")
+            max_tokens = 4000
             
         # Use the modern OpenAI client approach
         response = client.chat.completions.create(

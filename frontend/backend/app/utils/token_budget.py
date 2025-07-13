@@ -9,12 +9,14 @@ logger = logging.getLogger(__name__)
 
 # Token estimation constants
 CHARS_PER_TOKEN = 4.5  # Chars per token estimation
-MAX_TOKENS_PER_REQUEST = 128000  # Updated for GPT-4 Turbo 128k context
+MAX_TOKENS_PER_REQUEST = 128000  # Total context window for GPT-4 Turbo
+MAX_COMPLETION_TOKENS = 4096  # Hard limit on completion tokens for GPT-4 Turbo
+AVAILABLE_PROMPT_TOKENS = MAX_TOKENS_PER_REQUEST - MAX_COMPLETION_TOKENS  # ~123,904 tokens for prompt
 PROMPT_OVERHEAD = 1000  # Base overhead for prompt structure
-MAX_SAFE_FILES = 100  # Increased for larger context window
+MAX_SAFE_FILES = 100  # Maximum number of files to process
 
 # Minimum number of important files to include regardless of token budget
-MIN_FILES_TO_INCLUDE = 5  # Increased from 3
+MIN_FILES_TO_INCLUDE = 5  # Ensure we include at least this many files
 
 def count_files_in_repo(repo_path: str) -> int:
     """
@@ -80,7 +82,7 @@ def calculate_dynamic_max_files(repo_path: str) -> int:
 def select_files_with_budget(
     repo_path: str, 
     scored_files: List[Dict], 
-    max_token_budget: int = MAX_TOKENS_PER_REQUEST - PROMPT_OVERHEAD,
+    max_token_budget: int = AVAILABLE_PROMPT_TOKENS - PROMPT_OVERHEAD,
     client_max_files: Optional[int] = None
 ) -> Tuple[List[str], int]:
     """
@@ -127,7 +129,7 @@ def select_files_with_budget(
     
     # Reserve space for README generation - ensure we have at least 2000 tokens available
     # for the response even if we use the entire context window
-    remaining_budget = max(max_token_budget - tokens_used - 2000, 0)
+    remaining_budget = max(max_token_budget - 2000, 0)
     
     # Then process remaining files within budget
     for file_info in sorted_files[min_files_to_process:]:

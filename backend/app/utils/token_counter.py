@@ -11,19 +11,25 @@ class TokenCounter:
     Handles real-time token counting for prompt assembly
     """
     
-    def __init__(self, model_name: str = "gpt-4", max_tokens: int = 8192, buffer: int = 500):
+    def __init__(self, model_name: str = "gpt-4-1106-preview", max_tokens: int = 128000, buffer: int = 4096):
         """
         Initialize the TokenCounter
         
         Args:
             model_name: The name of the model to use for encoding
-            max_tokens: Maximum tokens allowed for the model
-            buffer: Buffer to leave for the response
+            max_tokens: Maximum tokens allowed for the model (total context window)
+            buffer: Buffer to leave for the response (should be the max completion tokens)
         """
         self.model_name = model_name
         self.max_tokens = max_tokens
         self.buffer = buffer
-        self.available_tokens = max_tokens - buffer
+        
+        # For GPT-4 Turbo, ensure we respect the hard completion token limit
+        if model_name == "gpt-4-1106-preview" and buffer > 4096:
+            logger.warning(f"Reducing buffer from {buffer} to 4096 for {model_name} due to completion token limit")
+            self.buffer = 4096
+            
+        self.available_tokens = max_tokens - self.buffer
         self.current_count = 0
         self.sections = {}  # Track sections and their token counts
         self.section_priorities = {}  # Track section priorities

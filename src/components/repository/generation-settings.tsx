@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Sparkles, FileText, Settings2, Code, Zap } from 'lucide-react'
 
 export type ToneOption = 'professional' | 'startup' | 'meme'
-export type ModelOption = 'gpt-4' | 'gpt-3.5-turbo'
+export type ModelOption = 'gpt-4-1106-preview' | 'gpt-4' | 'gpt-3.5-turbo'
 export type ModeOption = 'standard' | 'detailed' | 'concise' | 'creative'
 
 interface GenerationSettingsProps {
@@ -27,7 +27,7 @@ export function GenerationSettings({
   onSettingsChange,
   defaultSettings = {
     tone: 'professional',
-    model: 'gpt-4',
+    model: 'gpt-4-1106-preview',
     mode: 'standard'
   }
 }: GenerationSettingsProps) {
@@ -112,7 +112,11 @@ export function GenerationSettings({
             onValueChange={(value) => updateSettings('model', value as ModelOption)}
             className="w-full"
           >
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="gpt-4-1106-preview" className="flex items-center gap-1">
+                <Sparkles className="h-4 w-4" />
+                GPT-4 Turbo
+              </TabsTrigger>
               <TabsTrigger value="gpt-4" className="flex items-center gap-1">
                 <Sparkles className="h-4 w-4" />
                 GPT-4
@@ -124,9 +128,11 @@ export function GenerationSettings({
             </TabsList>
           </Tabs>
           <p className="text-xs text-muted-foreground mt-1">
-            {settings.model === 'gpt-4' 
-              ? 'Most powerful model, best for complex README generation' 
-              : 'Faster and more cost-effective model'}
+            {settings.model === 'gpt-4-1106-preview'
+              ? 'Massive context window, perfect for large repositories'
+              : settings.model === 'gpt-4' 
+                ? 'Powerful model, best for complex README generation' 
+                : 'Faster and more cost-effective model'}
           </p>
         </div>
 

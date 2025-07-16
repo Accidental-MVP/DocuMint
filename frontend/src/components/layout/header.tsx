@@ -1,10 +1,50 @@
+'use client';
+
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { FileText, Github, Settings, Menu, X } from 'lucide-react'
-import { useState } from 'react'
+import { FileText, Github, Settings, Menu, X, User } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { useRouter } from 'next/navigation'
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const supabase = createClientComponentClient();
+  const router = useRouter();
+
+  useEffect(() => {
+    async function getUser() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setUser(session?.user || null);
+      } catch (error) {
+        console.error('Error getting user:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    getUser();
+    
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+    
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  const handleSignIn = () => {
+    router.push('/login');
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    router.push('/');
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-lg">
@@ -42,12 +82,45 @@ export function Header() {
             <Button variant="ghost" size="icon" className="text-foreground/70 hover:text-primary hover:bg-primary-50">
               <Github className="h-5 w-5" />
             </Button>
-            <Button variant="ghost" size="icon" className="text-foreground/70 hover:text-primary hover:bg-primary-50">
-              <Settings className="h-5 w-5" />
-            </Button>
-            <Button variant="default" className="bg-primary hover:bg-primary-600 transition-colors">
-              Sign In
-            </Button>
+            {user && (
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="text-foreground/70 hover:text-primary hover:bg-primary-50"
+                onClick={() => router.push('/api-keys')}
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+            )}
+            {!loading && (
+              user ? (
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <User className="h-4 w-4" />
+                    </div>
+                    <span className="text-sm font-medium hidden lg:inline-block">
+                      {user.email?.split('@')[0]}
+                    </span>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    onClick={handleSignOut}
+                    className="border-primary text-primary hover:bg-primary/10"
+                  >
+                    Sign Out
+                  </Button>
+                </div>
+              ) : (
+                <Button 
+                  variant="default" 
+                  className="bg-primary hover:bg-primary-600 transition-colors"
+                  onClick={handleSignIn}
+                >
+                  Sign In
+                </Button>
+              )
+            )}
           </div>
           
           {/* Mobile Menu Button */}
@@ -95,12 +168,44 @@ export function Header() {
               <Button variant="ghost" size="icon" className="text-foreground/70">
                 <Github className="h-5 w-5" />
               </Button>
-              <Button variant="ghost" size="icon" className="text-foreground/70">
-                <Settings className="h-5 w-5" />
-              </Button>
-              <Button variant="default" className="w-full bg-primary hover:bg-primary-600 transition-colors">
-                Sign In
-              </Button>
+              {user && (
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="text-foreground/70"
+                  onClick={() => {
+                    router.push('/api-keys');
+                    setIsMenuOpen(false);
+                  }}
+                >
+                  <Settings className="h-5 w-5" />
+                </Button>
+              )}
+              {!loading && (
+                user ? (
+                  <Button 
+                    variant="default" 
+                    className="w-full bg-primary hover:bg-primary-600 transition-colors"
+                    onClick={() => {
+                      handleSignOut();
+                      setIsMenuOpen(false);
+                    }}
+                  >
+                    Sign Out
+                  </Button>
+                ) : (
+                  <Button 
+                    variant="default" 
+                    className="w-full bg-primary hover:bg-primary-600 transition-colors"
+                    onClick={() => {
+                      handleSignIn();
+                      setIsMenuOpen(false);
+                    }}
+                  >
+                    Sign In
+                  </Button>
+                )
+              )}
             </div>
           </nav>
         </div>

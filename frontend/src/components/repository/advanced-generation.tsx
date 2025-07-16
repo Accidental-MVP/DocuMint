@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Sparkles, AlertCircle, Check, Loader2, FileText, Zap } from 'lucide-react';
-import { GenerationSettings, ToneOption, ModelOption, ModeOption } from './generation-settings';
+import { GenerationSettings, ToneOption, ModelOption, ModeOption } from '../../../../src/components/repository/generation-settings';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api-client';
@@ -182,7 +182,7 @@ export function AdvancedGeneration({ repoUrl }: AdvancedGenerationProps) {
         </CardContent>
         <CardFooter className="flex justify-between">
           <div className="flex items-center gap-2">
-            <Badge variant="outline">{repoUrl.split('/').pop()}</Badge>
+            <Badge>{repoUrl.split('/').pop()}</Badge>
           </div>
           <Button 
             onClick={generateReadme} 
@@ -215,13 +215,17 @@ export function AdvancedGeneration({ repoUrl }: AdvancedGenerationProps) {
           <CardContent>
             <div className="bg-muted rounded-md p-4 overflow-auto max-h-[500px]">
               {generationMethod === 'streaming' ? (
-                <ReactMarkdown className="prose dark:prose-invert max-w-none">
-                  {streamingContent}
-                </ReactMarkdown>
+                <div className="prose dark:prose-invert max-w-none">
+                  <ReactMarkdown>
+                    {streamingContent}
+                  </ReactMarkdown>
+                </div>
               ) : (
-                <ReactMarkdown className="prose dark:prose-invert max-w-none">
-                  {readmeContent}
-                </ReactMarkdown>
+                <div className="prose dark:prose-invert max-w-none">
+                  <ReactMarkdown>
+                    {readmeContent}
+                  </ReactMarkdown>
+                </div>
               )}
             </div>
           </CardContent>

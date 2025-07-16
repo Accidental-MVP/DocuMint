@@ -16,7 +16,8 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
                             tone: str = "professional",
                             model: str = "gpt-4-1106-preview",
                             mode: str = "standard",
-                            max_files: Optional[int] = None) -> Dict:
+                            max_files: Optional[int] = None,
+                            token_usage = None) -> Dict:
     """
     Generate a README for a GitHub repository
     
@@ -26,6 +27,7 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         model: Model to use for generation
         mode: Generation mode (standard, detailed, concise, creative)
         max_files: Maximum number of files to analyze (optional)
+        token_usage: TokenUsage object to track token usage (optional)
         
     Returns:
         Dict: Generated README and metadata
@@ -50,13 +52,13 @@ def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         
         # Process chunks with context-aware reader
         logger.info("Processing file chunks with context")
-        reader = ContextAwareReader(model="gpt-3.5-turbo")  # Use faster model for analysis
+        reader = ContextAwareReader(model="gpt-3.5-turbo", token_usage=token_usage)  # Use faster model for analysis
         file_summaries = reader.process_repository_chunks(chunks)
         
         # Generate repository understanding
         logger.info("Generating repository understanding")
         # Use GPT-4 Turbo for the final repository understanding to handle larger context
-        understanding_reader = ContextAwareReader(model="gpt-4-1106-preview")
+        understanding_reader = ContextAwareReader(model="gpt-4-1106-preview", token_usage=token_usage)
         repo_understanding = understanding_reader.generate_repository_understanding(file_summaries)
         
         # Combine processing metadata

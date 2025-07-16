@@ -1,6 +1,7 @@
 import logging
 from openai import OpenAI
 from ..config import OPENAI_API_KEY, DEFAULT_MODEL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from ..models.token_usage import TokenUsage, add_token_usage
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -11,7 +12,8 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 def generate_readme(prompt: str, model: str = DEFAULT_MODEL, 
                     temperature: float = DEFAULT_TEMPERATURE,
-                    max_tokens: int = DEFAULT_MAX_TOKENS):
+                    max_tokens: int = DEFAULT_MAX_TOKENS,
+                    token_usage = None):
     """
     Generate README content using OpenAI API
     
@@ -20,6 +22,7 @@ def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
         model: The model to use for generation
         temperature: Controls randomness (0-1)
         max_tokens: Maximum tokens to generate
+        token_usage: TokenUsage object to track token usage (optional)
         
     Returns:
         str: Generated README content
@@ -47,7 +50,7 @@ def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
         )
         
         # Track token usage for billing purposes
-        _track_token_usage(response)
+        _track_token_usage(response, token_usage)
         
         # Add response structure check
         try:
@@ -61,12 +64,13 @@ def generate_readme(prompt: str, model: str = DEFAULT_MODEL,
         # Fallback to mock response in case of errors
         return _get_mock_readme()
 
-def _track_token_usage(response):
+def _track_token_usage(response, token_usage=None):
     """
     Track token usage for billing purposes
     
     Args:
         response: OpenAI API response
+        token_usage: TokenUsage object to track token usage (optional)
     """
     try:
         prompt_tokens = response.usage.prompt_tokens
@@ -75,8 +79,13 @@ def _track_token_usage(response):
         
         logger.info(f"Token usage - Prompt: {prompt_tokens}, Completion: {completion_tokens}, Total: {total_tokens}")
         
-        # TODO: Store token usage in database for Stripe integration
-        # Example: db.save_token_usage(user_id, prompt_tokens, completion_tokens, total_tokens)
+        # Update token usage if provided
+        if token_usage:
+            add_token_usage(token_usage, {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens
+            })
     except Exception as e:
         logger.warning(f"Failed to track token usage: {e}")
 

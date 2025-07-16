@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends, Security
 from fastapi.responses import StreamingResponse
 import logging
 from typing import Dict, List, Optional, Any
@@ -7,6 +7,9 @@ import asyncio
 from ..config import AVAILABLE_MODELS, GENERATION_MODES, DEFAULT_REPO_URL
 from ..services.generate import generate_readme_for_repo
 from ..services.advanced_generate import AdvancedReadmeGenerator
+from ..dependencies import get_token_usage, get_current_user_or_api_key
+from ..models.user import User
+from ..models.token_usage import TokenUsage
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +51,11 @@ async def get_modes() -> Dict[str, Any]:
     }
 
 @router.post("/generate")
-async def generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
+async def generate_readme(
+    request: Dict[str, Any],
+    token_usage: TokenUsage = Depends(get_token_usage),
+    current_user: User = Depends(get_current_user_or_api_key)
+) -> Dict[str, Any]:
     """Generate a README for a GitHub repository"""
     repo_url = request.get("repo_url", DEFAULT_REPO_URL)
     tone = request.get("tone", "professional")
@@ -56,7 +63,7 @@ async def generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
     mode = request.get("mode", "standard")
     max_files = request.get("max_files")
     
-    logger.info(f"Received request to generate README for: {repo_url}")
+    logger.info(f"Received request to generate README for: {repo_url} from user: {current_user.id}")
     
     try:
         result = generate_readme_for_repo(
@@ -64,22 +71,55 @@ async def generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
             tone=tone,
             model=model,
             mode=mode,
-            max_files=max_files
+            max_files=max_files,
+            token_usage=token_usage
         )
+        
+        # Store the token usage in Supabase
+        from ..config import supabase
+        if supabase:
+            # Check if there's an existing record for this user
+            response = supabase.table("token_usage").select("*").eq("user_id", str(current_user.id)).execute()
+            
+            if response.data and len(response.data) > 0:
+                # Update existing record
+                existing_usage = response.data[0]
+                updated_usage = {
+                    "prompt_tokens": existing_usage.get("prompt_tokens", 0) + token_usage.prompt_tokens,
+                    "completion_tokens": existing_usage.get("completion_tokens", 0) + token_usage.completion_tokens,
+                    "total_tokens": existing_usage.get("total_tokens", 0) + token_usage.total_tokens,
+                    "last_updated": token_usage.last_updated.isoformat()
+                }
+                supabase.table("token_usage").update(updated_usage).eq("user_id", str(current_user.id)).execute()
+            else:
+                # Create new record
+                new_usage = {
+                    "user_id": str(current_user.id),
+                    "prompt_tokens": token_usage.prompt_tokens,
+                    "completion_tokens": token_usage.completion_tokens,
+                    "total_tokens": token_usage.total_tokens,
+                    "last_updated": token_usage.last_updated.isoformat()
+                }
+                supabase.table("token_usage").insert(new_usage).execute()
+        
         return result
     except Exception as e:
         logger.error(f"Error generating README: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/advanced-generate")
-async def advanced_generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
+async def advanced_generate_readme(
+    request: Dict[str, Any],
+    token_usage: TokenUsage = Depends(get_token_usage),
+    current_user: User = Depends(get_current_user_or_api_key)
+) -> Dict[str, Any]:
     """Generate a README using advanced strategies"""
     repo_url = request.get("repo_url", DEFAULT_REPO_URL)
     tone = request.get("tone", "professional")
     model = request.get("model", "gpt-4-1106-preview")
     max_files = request.get("max_files")
     
-    logger.info(f"Received request for advanced README generation for: {repo_url}")
+    logger.info(f"Received request for advanced README generation for: {repo_url} from user: {current_user.id}")
     
     try:
         # First get repository understanding and file summaries using the standard method
@@ -88,7 +128,8 @@ async def advanced_generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
             tone=tone,
             model="gpt-3.5-turbo",  # Use faster model for initial analysis
             mode="standard",
-            max_files=max_files
+            max_files=max_files,
+            token_usage=token_usage
         )
         
         if not result["success"]:
@@ -106,8 +147,36 @@ async def advanced_generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
             repo_url=repo_url,
             repo_understanding=repo_understanding,
             file_summaries=file_summaries,
-            tone=tone
+            tone=tone,
+            token_usage=token_usage
         )
+        
+        # Store the token usage in Supabase
+        from ..config import supabase
+        if supabase:
+            # Check if there's an existing record for this user
+            response = supabase.table("token_usage").select("*").eq("user_id", str(current_user.id)).execute()
+            
+            if response.data and len(response.data) > 0:
+                # Update existing record
+                existing_usage = response.data[0]
+                updated_usage = {
+                    "prompt_tokens": existing_usage.get("prompt_tokens", 0) + token_usage.prompt_tokens,
+                    "completion_tokens": existing_usage.get("completion_tokens", 0) + token_usage.completion_tokens,
+                    "total_tokens": existing_usage.get("total_tokens", 0) + token_usage.total_tokens,
+                    "last_updated": token_usage.last_updated.isoformat()
+                }
+                supabase.table("token_usage").update(updated_usage).eq("user_id", str(current_user.id)).execute()
+            else:
+                # Create new record
+                new_usage = {
+                    "user_id": str(current_user.id),
+                    "prompt_tokens": token_usage.prompt_tokens,
+                    "completion_tokens": token_usage.completion_tokens,
+                    "total_tokens": token_usage.total_tokens,
+                    "last_updated": token_usage.last_updated.isoformat()
+                }
+                supabase.table("token_usage").insert(new_usage).execute()
         
         # Return the result
         return {
@@ -124,7 +193,11 @@ async def advanced_generate_readme(request: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/stream-generate")
-async def stream_generate_readme(request: Request) -> StreamingResponse:
+async def stream_generate_readme(
+    request: Request,
+    token_usage: TokenUsage = Depends(get_token_usage),
+    current_user: User = Depends(get_current_user_or_api_key)
+) -> StreamingResponse:
     """Generate a README with streaming output"""
     # Parse the request body
     body = await request.json()
@@ -133,7 +206,7 @@ async def stream_generate_readme(request: Request) -> StreamingResponse:
     model = body.get("model", "gpt-4-1106-preview")
     max_files = body.get("max_files")
     
-    logger.info(f"Received request for streaming README generation for: {repo_url}")
+    logger.info(f"Received request for streaming README generation for: {repo_url} from user: {current_user.id}")
     
     async def generate_stream():
         try:
@@ -143,7 +216,8 @@ async def stream_generate_readme(request: Request) -> StreamingResponse:
                 tone=tone,
                 model="gpt-3.5-turbo",  # Use faster model for initial analysis
                 mode="standard",
-                max_files=max_files
+                max_files=max_files,
+                token_usage=token_usage
             )
             
             if not result["success"]:
@@ -162,11 +236,39 @@ async def stream_generate_readme(request: Request) -> StreamingResponse:
                 repo_url=repo_url,
                 repo_understanding=repo_understanding,
                 file_summaries=file_summaries,
-                tone=tone
+                tone=tone,
+                token_usage=token_usage
             ):
                 yield chunk
                 # Small delay to avoid overwhelming the client
                 await asyncio.sleep(0.1)
+                
+            # After streaming is complete, store the token usage in Supabase
+            from ..config import supabase
+            if supabase:
+                # Check if there's an existing record for this user
+                response = supabase.table("token_usage").select("*").eq("user_id", str(current_user.id)).execute()
+                
+                if response.data and len(response.data) > 0:
+                    # Update existing record
+                    existing_usage = response.data[0]
+                    updated_usage = {
+                        "prompt_tokens": existing_usage.get("prompt_tokens", 0) + token_usage.prompt_tokens,
+                        "completion_tokens": existing_usage.get("completion_tokens", 0) + token_usage.completion_tokens,
+                        "total_tokens": existing_usage.get("total_tokens", 0) + token_usage.total_tokens,
+                        "last_updated": token_usage.last_updated.isoformat()
+                    }
+                    supabase.table("token_usage").update(updated_usage).eq("user_id", str(current_user.id)).execute()
+                else:
+                    # Create new record
+                    new_usage = {
+                        "user_id": str(current_user.id),
+                        "prompt_tokens": token_usage.prompt_tokens,
+                        "completion_tokens": token_usage.completion_tokens,
+                        "total_tokens": token_usage.total_tokens,
+                        "last_updated": token_usage.last_updated.isoformat()
+                    }
+                    supabase.table("token_usage").insert(new_usage).execute()
                 
         except Exception as e:
             logger.error(f"Error in streaming README generation: {e}")

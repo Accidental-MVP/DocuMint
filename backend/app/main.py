@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from .api.routes import router as api_router
+from .routers.auth import router as auth_router
 from .config import APP_NAME, APP_VERSION
 
 # Set up logging
@@ -31,6 +32,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(api_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 
 @app.get("/")
 def root():
@@ -46,6 +48,12 @@ def root():
             "models": "/api/models",
             "modes": "/api/modes",
             "health": "/api/health",
+            "auth": {
+                "register": "/api/auth/register",
+                "token": "/api/auth/token",
+                "me": "/api/auth/me",
+                "api-keys": "/api/auth/api-keys"
+            }
         }
     }
 

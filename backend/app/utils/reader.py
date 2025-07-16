@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from openai import OpenAI
 
 from ..config import OPENAI_API_KEY
+from ..models.token_usage import TokenUsage, add_token_usage
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,8 +21,9 @@ class ContextAwareReader:
     Processes file chunks while maintaining context between chunks
     """
     
-    def __init__(self, model: str = "gpt-3.5-turbo"):
+    def __init__(self, model: str = "gpt-3.5-turbo", token_usage = None):
         self.model = model
+        self.token_usage = token_usage
         self.conversation_histories = {}
         self.summaries = {}
         self.total_prompt_tokens = 0
@@ -181,6 +183,14 @@ Continue building your understanding of this file based on what you've seen so f
             # Track token usage
             self.total_prompt_tokens += response.usage.prompt_tokens
             self.total_completion_tokens += response.usage.completion_tokens
+            
+            # Update token usage if provided
+            if self.token_usage:
+                add_token_usage(self.token_usage, {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.prompt_tokens + response.usage.completion_tokens
+                })
             
             # Get the response content
             assistant_message = response.choices[0].message.content.strip()

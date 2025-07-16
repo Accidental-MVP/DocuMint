@@ -1,21 +1,33 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { Alert } from '@/components/ui/alert';
+import { ensureUserExists } from '@/utils/user-management';
 
 export default function Login() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClientComponentClient();
   const [redirectUrl, setRedirectUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Check for error params from the callback route
+    const errorParam = searchParams.get('error');
+    const errorDescription = searchParams.get('error_description');
+    
+    if (errorParam) {
+      setError(errorDescription || `Authentication error: ${errorParam}`);
+    }
+    
     // Set the redirect URL only on the client side
     setRedirectUrl(`${window.location.origin}/auth/callback`);
     
@@ -27,8 +39,9 @@ export default function Login() {
           // User is authenticated, redirect to dashboard
           router.push('/dashboard');
         }
-      } catch (error) {
-        console.error('Error checking authentication:', error);
+      } catch (err) {
+        console.error('Error checking authentication:', err);
+        setError('Failed to check authentication status');
       } finally {
         setLoading(false);
       }
@@ -37,8 +50,15 @@ export default function Login() {
     checkUser();
     
     // Subscribe to auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
+        try {
+          // Ensure the user exists in our custom users table
+          await ensureUserExists(supabase, session.user);
+        } catch (error) {
+          console.error('Error ensuring user exists:', error);
+        }
+        
         // User has signed in, redirect to dashboard
         router.push('/dashboard');
       }
@@ -48,7 +68,7 @@ export default function Login() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [router, supabase]);
+  }, [router, supabase, searchParams]);
 
   if (loading) {
     return (
@@ -94,6 +114,13 @@ export default function Login() {
           </CardHeader>
           
           <CardContent className="space-y-4">
+            {/* Error Alert */}
+            {error && (
+              <Alert variant="destructive" className="text-sm">
+                {error}
+              </Alert>
+            )}
+            
             {/* Supabase Auth UI */}
             <div className="space-y-2">
               {redirectUrl && (

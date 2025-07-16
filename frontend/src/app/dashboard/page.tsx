@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Image from 'next/image';
 import Link from 'next/link';
+import { ensureUserExists } from '@/utils/user-management';
 
 export default function Dashboard() {
   const router = useRouter();
@@ -23,6 +24,9 @@ export default function Dashboard() {
         }
         
         setUser(session.user);
+        
+        // Ensure the user exists in our custom users table
+        await ensureUserExists(supabase, session.user);
       } catch (error) {
         console.error('Error getting user:', error);
       } finally {

@@ -8,6 +8,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { ensureUserExists } from '@/utils/user-management';
 
 export default function Register() {
   const router = useRouter();
@@ -37,9 +38,16 @@ export default function Register() {
     checkUser();
     
     // Subscribe to auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
-        // User has signed in, redirect to dashboard
+        try {
+          // Ensure the user exists in our custom users table
+          await ensureUserExists(supabase, session.user);
+        } catch (error) {
+          console.error('Error ensuring user exists:', error);
+        }
+        
+        // Redirect to dashboard
         router.push('/dashboard');
       }
     });

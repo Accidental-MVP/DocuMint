@@ -5,12 +5,48 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
+  const error = requestUrl.searchParams.get('error');
+  const errorDescription = requestUrl.searchParams.get('error_description');
+  
+  // If there's an error in the request, redirect to login with the error
+  if (error) {
+    console.error(`Auth error: ${error} - ${errorDescription}`);
+    return NextResponse.redirect(
+      new URL(`/login?error=${encodeURIComponent(error)}&error_description=${encodeURIComponent(errorDescription || '')}`, 
+      request.url)
+    );
+  }
 
   if (code) {
     const supabase = createRouteHandlerClient({ cookies });
-    await supabase.auth.exchangeCodeForSession(code);
+    
+    try {
+      // Exchange the code for a session
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      
+      if (error) {
+        console.error('Error exchanging code for session:', error);
+        return NextResponse.redirect(
+          new URL(`/login?error=${encodeURIComponent('auth_error')}&error_description=${encodeURIComponent(error.message)}`, 
+          request.url)
+        );
+      }
+      
+      // If we have a user, we'll skip trying to create them in our custom table
+      // The database triggers should handle this automatically
+      // If they don't, we'll handle it on the client side in the login/register pages
+      
+      // URL to redirect to after sign in process completes
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    } catch (unexpectedError) {
+      console.error('Unexpected error during authentication:', unexpectedError);
+      return NextResponse.redirect(
+        new URL(`/login?error=${encodeURIComponent('unexpected_error')}&error_description=${encodeURIComponent('An unexpected error occurred')}`, 
+        request.url)
+      );
+    }
   }
 
-  // URL to redirect to after sign in process completes
-  return NextResponse.redirect(new URL('/dashboard', request.url));
+  // If no code is present, redirect to login
+  return NextResponse.redirect(new URL('/login', request.url));
 } 

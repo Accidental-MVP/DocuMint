@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 import logging
 from typing import Dict, List, Optional, Any
 import asyncio
+from datetime import datetime
 
 from ..config import AVAILABLE_MODELS, GENERATION_MODES, DEFAULT_REPO_URL
 from ..services.generate import generate_readme_for_repo
@@ -81,24 +82,36 @@ async def generate_readme(
             # Check if there's an existing record for this user
             response = supabase.table("token_usage").select("*").eq("user_id", str(current_user.id)).execute()
             
-            if response.data and len(response.data) > 0:
-                # Update existing record
-                existing_usage = response.data[0]
+            # Get today's date
+            today = datetime.now().date().isoformat()
+            
+            # Prepare token usage data
+            tokens_used = token_usage.total_tokens
+            
+            # Check if there's an entry for today
+            today_entry = None
+            if response.data:
+                for entry in response.data:
+                    if entry.get("date") == today:
+                        today_entry = entry
+                        break
+            
+            if today_entry:
+                # Update existing record for today
                 updated_usage = {
-                    "prompt_tokens": existing_usage.get("prompt_tokens", 0) + token_usage.prompt_tokens,
-                    "completion_tokens": existing_usage.get("completion_tokens", 0) + token_usage.completion_tokens,
-                    "total_tokens": existing_usage.get("total_tokens", 0) + token_usage.total_tokens,
-                    "last_updated": token_usage.last_updated.isoformat()
+                    "tokens_used": today_entry.get("tokens_used", 0) + tokens_used,
+                    "source": "web",
+                    "endpoint": "/generate"
                 }
-                supabase.table("token_usage").update(updated_usage).eq("user_id", str(current_user.id)).execute()
+                supabase.table("token_usage").update(updated_usage).eq("id", today_entry.get("id")).execute()
             else:
-                # Create new record
+                # Create new record for today
                 new_usage = {
                     "user_id": str(current_user.id),
-                    "prompt_tokens": token_usage.prompt_tokens,
-                    "completion_tokens": token_usage.completion_tokens,
-                    "total_tokens": token_usage.total_tokens,
-                    "last_updated": token_usage.last_updated.isoformat()
+                    "date": today,
+                    "tokens_used": tokens_used,
+                    "source": "web",
+                    "endpoint": "/generate"
                 }
                 supabase.table("token_usage").insert(new_usage).execute()
         
@@ -157,24 +170,36 @@ async def advanced_generate_readme(
             # Check if there's an existing record for this user
             response = supabase.table("token_usage").select("*").eq("user_id", str(current_user.id)).execute()
             
-            if response.data and len(response.data) > 0:
-                # Update existing record
-                existing_usage = response.data[0]
+            # Get today's date
+            today = datetime.now().date().isoformat()
+            
+            # Prepare token usage data
+            tokens_used = token_usage.total_tokens
+            
+            # Check if there's an entry for today
+            today_entry = None
+            if response.data:
+                for entry in response.data:
+                    if entry.get("date") == today:
+                        today_entry = entry
+                        break
+            
+            if today_entry:
+                # Update existing record for today
                 updated_usage = {
-                    "prompt_tokens": existing_usage.get("prompt_tokens", 0) + token_usage.prompt_tokens,
-                    "completion_tokens": existing_usage.get("completion_tokens", 0) + token_usage.completion_tokens,
-                    "total_tokens": existing_usage.get("total_tokens", 0) + token_usage.total_tokens,
-                    "last_updated": token_usage.last_updated.isoformat()
+                    "tokens_used": today_entry.get("tokens_used", 0) + tokens_used,
+                    "source": "web",
+                    "endpoint": "/advanced-generate"
                 }
-                supabase.table("token_usage").update(updated_usage).eq("user_id", str(current_user.id)).execute()
+                supabase.table("token_usage").update(updated_usage).eq("id", today_entry.get("id")).execute()
             else:
-                # Create new record
+                # Create new record for today
                 new_usage = {
                     "user_id": str(current_user.id),
-                    "prompt_tokens": token_usage.prompt_tokens,
-                    "completion_tokens": token_usage.completion_tokens,
-                    "total_tokens": token_usage.total_tokens,
-                    "last_updated": token_usage.last_updated.isoformat()
+                    "date": today,
+                    "tokens_used": tokens_used,
+                    "source": "web",
+                    "endpoint": "/advanced-generate"
                 }
                 supabase.table("token_usage").insert(new_usage).execute()
         
@@ -249,24 +274,36 @@ async def stream_generate_readme(
                 # Check if there's an existing record for this user
                 response = supabase.table("token_usage").select("*").eq("user_id", str(current_user.id)).execute()
                 
-                if response.data and len(response.data) > 0:
-                    # Update existing record
-                    existing_usage = response.data[0]
+                # Get today's date
+                today = datetime.now().date().isoformat()
+                
+                # Prepare token usage data
+                tokens_used = token_usage.total_tokens
+                
+                # Check if there's an entry for today
+                today_entry = None
+                if response.data:
+                    for entry in response.data:
+                        if entry.get("date") == today:
+                            today_entry = entry
+                            break
+                
+                if today_entry:
+                    # Update existing record for today
                     updated_usage = {
-                        "prompt_tokens": existing_usage.get("prompt_tokens", 0) + token_usage.prompt_tokens,
-                        "completion_tokens": existing_usage.get("completion_tokens", 0) + token_usage.completion_tokens,
-                        "total_tokens": existing_usage.get("total_tokens", 0) + token_usage.total_tokens,
-                        "last_updated": token_usage.last_updated.isoformat()
+                        "tokens_used": today_entry.get("tokens_used", 0) + tokens_used,
+                        "source": "web",
+                        "endpoint": "/stream-generate"
                     }
-                    supabase.table("token_usage").update(updated_usage).eq("user_id", str(current_user.id)).execute()
+                    supabase.table("token_usage").update(updated_usage).eq("id", today_entry.get("id")).execute()
                 else:
-                    # Create new record
+                    # Create new record for today
                     new_usage = {
                         "user_id": str(current_user.id),
-                        "prompt_tokens": token_usage.prompt_tokens,
-                        "completion_tokens": token_usage.completion_tokens,
-                        "total_tokens": token_usage.total_tokens,
-                        "last_updated": token_usage.last_updated.isoformat()
+                        "date": today,
+                        "tokens_used": tokens_used,
+                        "source": "web",
+                        "endpoint": "/stream-generate"
                     }
                     supabase.table("token_usage").insert(new_usage).execute()
                 

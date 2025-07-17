@@ -1,16 +1,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { RepositoryInput } from '@/components/repository/repository-input';
 import { GenerationSettings, ToneOption, ModelOption, ModeOption } from '@/components/repository/generation-settings';
 import { ReadmePreview } from '@/components/repository/readme-preview';
 import { TokenUsage } from '@/components/repository/token-usage';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { FileText, Settings2, BarChart, AlertCircle } from 'lucide-react';
+import { FileText, Settings2, BarChart, AlertCircle, LogIn, Loader2 } from 'lucide-react';
 import { generateReadme, getAvailableModels, getGenerationModes, checkApiHealth } from '@/lib/api/client';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 
 export default function GeneratePage() {
+  const router = useRouter();
+  const supabase = createClientComponentClient();
   // Use null as initial state to prevent hydration mismatch
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<string | null>(null);
@@ -33,6 +38,7 @@ export default function GeneratePage() {
   });
   const [error, setError] = useState<string | null>(null);
   const [apiHealthy, setApiHealthy] = useState<boolean | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   
   // Set initial state after component mounts to avoid hydration mismatch
   useEffect(() => {
@@ -44,10 +50,47 @@ export default function GeneratePage() {
       setApiHealthy(isHealthy);
     };
     
+    // Check authentication status
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session);
+    };
+    
     checkHealth();
-  }, []);
+    checkAuth();
+  }, [supabase]);
+
+  const handleRefreshSession = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const { data, error } = await supabase.auth.refreshSession();
+      
+      if (error) {
+        setError(`Failed to refresh session: ${error.message}`);
+        setIsAuthenticated(false);
+      } else if (data.session) {
+        setIsAuthenticated(true);
+        setError(null);
+      } else {
+        setError('No session available. Please sign in again.');
+        setIsAuthenticated(false);
+      }
+    } catch (error) {
+      console.error('Error refreshing session:', error);
+      setError('An unexpected error occurred while refreshing the session.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (url: string) => {
+    if (!isAuthenticated) {
+      setError('You must be signed in to generate a README. Please sign in and try again.');
+      return;
+    }
+    
     setIsLoading(true);
     setRepoUrl(url);
     setError(null);
@@ -84,6 +127,11 @@ export default function GeneratePage() {
         setActiveTab('preview');
       } else {
         setError(response.error || 'Failed to generate README');
+        
+        // If authentication error, prompt to sign in again
+        if (response.error?.includes('Not authenticated')) {
+          setIsAuthenticated(false);
+        }
       }
     } catch (error) {
       console.error('Error generating README:', error);
@@ -91,6 +139,10 @@ export default function GeneratePage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSignIn = () => {
+    router.push('/login');
   };
 
   // Only render when activeTab is set (client-side)
@@ -108,6 +160,29 @@ export default function GeneratePage() {
           <AlertTitle>API Connection Error</AlertTitle>
           <AlertDescription>
             Cannot connect to the API server. Please check that the backend is running and try again.
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {isAuthenticated === false && (
+        <Alert className="mb-6 bg-amber-50 border-amber-200">
+          <LogIn className="h-4 w-4" />
+          <AlertTitle>Authentication Required</AlertTitle>
+          <AlertDescription className="flex items-center justify-between">
+            <span>You need to be signed in to generate README files.</span>
+            <div className="flex gap-2">
+              <Button onClick={handleRefreshSession} variant="outline" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Refreshing
+                  </>
+                ) : (
+                  'Refresh Session'
+                )}
+              </Button>
+              <Button onClick={handleSignIn}>Sign In</Button>
+            </div>
           </AlertDescription>
         </Alert>
       )}
@@ -137,7 +212,7 @@ export default function GeneratePage() {
         </TabsList>
         
         <TabsContent value="input" className="space-y-8">
-          <RepositoryInput onSubmit={handleSubmit} isLoading={isLoading} />
+          <RepositoryInput onSubmit={handleSubmit} isLoading={isLoading} disabled={isAuthenticated === false} />
           <GenerationSettings onSettingsChange={setSettings} defaultSettings={settings} />
         </TabsContent>
         

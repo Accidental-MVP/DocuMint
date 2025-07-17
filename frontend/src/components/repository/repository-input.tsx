@@ -9,9 +9,10 @@ import { Github, ArrowRight, Loader2 } from 'lucide-react'
 interface RepositoryInputProps {
   onSubmit: (url: string) => void
   isLoading?: boolean
+  disabled?: boolean
 }
 
-export function RepositoryInput({ onSubmit, isLoading = false }: RepositoryInputProps) {
+export function RepositoryInput({ onSubmit, isLoading = false, disabled = false }: RepositoryInputProps) {
   const [url, setUrl] = useState('')
   const [error, setError] = useState('')
   const [isMounted, setIsMounted] = useState(false)
@@ -28,6 +29,10 @@ export function RepositoryInput({ onSubmit, isLoading = false }: RepositoryInput
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (disabled) {
+      return;
+    }
     
     if (!url.trim()) {
       setError('Please enter a GitHub repository URL')
@@ -60,17 +65,17 @@ export function RepositoryInput({ onSubmit, isLoading = false }: RepositoryInput
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               className="flex-1"
-              disabled={isLoading}
+              disabled={isLoading || disabled}
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </form>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button variant="outline" disabled={isLoading}>
+        <Button variant="outline" disabled={isLoading || disabled}>
           Examples
         </Button>
-        <Button onClick={handleSubmit} disabled={isLoading || !url.trim()}>
+        <Button onClick={handleSubmit} disabled={isLoading || disabled || !url.trim()}>
           {isLoading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

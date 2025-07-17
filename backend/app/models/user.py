@@ -7,17 +7,35 @@ class User(BaseModel):
     """User model"""
     id: UUID = Field(default_factory=uuid4)
     email: EmailStr
-    username: str
+    username: Optional[str] = None
     is_active: bool = True
     is_superuser: bool = False
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        # Allow extra fields for flexibility with external systems
+        extra = "ignore"
+        
+    def model_post_init(self, __context):
+        # Set username from email if not provided
+        if not self.username and self.email:
+            self.username = self.email.split("@")[0]
 
 class UserCreate(BaseModel):
     """User creation model"""
     email: EmailStr
-    username: str
+    username: Optional[str] = None
     password: str
+    
+    class Config:
+        # Allow extra fields for flexibility with external systems
+        extra = "ignore"
+        
+    def model_post_init(self, __context):
+        # Set username from email if not provided
+        if not self.username and self.email:
+            self.username = self.email.split("@")[0]
 
 class UserUpdate(BaseModel):
     """User update model"""
@@ -37,7 +55,7 @@ class UserResponse(BaseModel):
 
 class UserInDB(User):
     """User model with hashed password"""
-    hashed_password: str
+    hashed_password: Optional[str] = None
 
 class Token(BaseModel):
     """Token model"""

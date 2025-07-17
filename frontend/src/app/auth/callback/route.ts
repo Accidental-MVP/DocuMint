@@ -18,9 +18,12 @@ export async function GET(request: NextRequest) {
   }
 
   if (code) {
-    const supabase = createRouteHandlerClient({ cookies });
+    // Create a Supabase client with properly awaited cookies
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
     
     try {
+      console.log('Exchanging code for session...');
       // Exchange the code for a session
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
       
@@ -32,9 +35,10 @@ export async function GET(request: NextRequest) {
         );
       }
       
-      // If we have a user, we'll skip trying to create them in our custom table
-      // The database triggers should handle this automatically
-      // If they don't, we'll handle it on the client side in the login/register pages
+      console.log('Session created successfully for user:', data.session?.user.id);
+      
+      // The database trigger should handle creating the user in the public.users table
+      // We'll verify this in the dashboard page
       
       // URL to redirect to after sign in process completes
       return NextResponse.redirect(new URL('/dashboard', request.url));

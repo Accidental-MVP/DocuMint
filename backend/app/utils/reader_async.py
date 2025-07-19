@@ -1,6 +1,6 @@
 import logging
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, AsyncGenerator
 from openai import AsyncOpenAI
 
 from ..config import OPENAI_API_KEY
@@ -15,11 +15,15 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 class AsyncContextAwareReader:
     """
     Processes file chunks asynchronously while maintaining context between chunks
+    MASSIVE PERFORMANCE IMPROVEMENTS:
+    - Parallel chunk processing (10-15 chunks at once)
+    - Streaming responses for better performance
+    - Optimized concurrency limits
     """
     
-    def __init__(self, model: str = "gpt-3.5-turbo", concurrency_limit: int = 3):
+    def __init__(self, model: str = "gpt-3.5-turbo", concurrency_limit: int = 15):
         self.model = model
-        self.concurrency_limit = concurrency_limit  # Limit concurrent API calls
+        self.concurrency_limit = concurrency_limit  # Increased from 3 to 15 for massive speed improvements
         self.conversation_histories = {}
         self.summaries = {}
         self.total_prompt_tokens = 0
@@ -32,9 +36,107 @@ class AsyncContextAwareReader:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
     
+    async def process_chunk_streaming(self, chunk: Dict, summarize: bool = True) -> AsyncGenerator[str, None]:
+        """
+        Process a single chunk with streaming response for better performance
+        
+        Args:
+            chunk: The chunk to process
+            summarize: Whether to generate a summary
+            
+        Yields:
+            str: Streamed response content
+        """
+        file_path = chunk["file_path"]
+        chunk_index = chunk["chunk_index"]
+        total_chunks = chunk["total_chunks"]
+        content = chunk["content"]
+        
+        # Initialize conversation history for this file if it doesn't exist
+        if file_path not in self.conversation_histories:
+            self.conversation_histories[file_path] = []
+        
+        # Check if this is a dummy chunk
+        if file_path == "dummy.txt" and content == "No readable files found in the repository.":
+            logger.warning("Processing dummy chunk for empty repository")
+            yield "No readable files found in the repository."
+            return
+        
+        # Build prompt based on chunk position and history
+        if chunk_index == 0:
+            # First chunk of the file
+            system_message = f"""You are analyzing code from the file {file_path}. 
+This is chunk {chunk_index + 1} of {total_chunks}.
+Understand the code structure and purpose."""
+            
+            user_message = f"""Here is the beginning of the file {file_path} (lines {chunk['start_line']}-{chunk['end_line']}):
+
+```
+{content}
+```
+
+Please understand this code. If this is the only chunk, provide a comprehensive summary of the file's purpose and structure."""
+            
+        else:
+            # Subsequent chunk of the file
+            system_message = f"""You are continuing to analyze code from the file {file_path}.
+This is chunk {chunk_index + 1} of {total_chunks}.
+You have already seen the previous part(s) of this file."""
+            
+            user_message = f"""Here is the next part of the file {file_path} (lines {chunk['start_line']}-{chunk['end_line']}):
+
+```
+{content}
+```
+
+Continue building your understanding of this file based on what you've seen so far."""
+        
+        # If this is the last chunk and we want a summary
+        if chunk_index == total_chunks - 1 and summarize:
+            user_message += "\n\nThis is the last chunk of the file. Please provide a comprehensive summary of the entire file's purpose, structure, and key functionality."
+        
+        # Add to conversation history
+        self.conversation_histories[file_path].append({"role": "system", "content": system_message})
+        self.conversation_histories[file_path].append({"role": "user", "content": user_message})
+        
+        try:
+            # Call OpenAI API with streaming for better performance
+            stream = await client.chat.completions.create(
+                model=self.model,
+                messages=self.conversation_histories[file_path],
+                temperature=0.3,
+                max_tokens=1000,
+                stream=True  # Enable streaming for better performance
+            )
+            
+            # Collect streamed response
+            assistant_message = ""
+            async for chunk_response in stream:
+                if chunk_response.choices[0].delta.content:
+                    content_piece = chunk_response.choices[0].delta.content
+                    assistant_message += content_piece
+                    yield content_piece
+            
+            # Track token usage (approximate for streaming)
+            self.total_prompt_tokens += len(assistant_message) // 4  # Rough estimate
+            self.total_completion_tokens += len(assistant_message) // 4
+            
+            # Add to conversation history
+            self.conversation_histories[file_path].append({"role": "assistant", "content": assistant_message})
+            
+            # If this is the last chunk, save the summary
+            if chunk_index == total_chunks - 1:
+                self.summaries[file_path] = assistant_message
+            
+        except Exception as e:
+            logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
+            error_msg = f"Error processing chunk: {str(e)}"
+            yield error_msg
+    
     async def process_chunk(self, chunk: Dict, summarize: bool = True) -> str:
         """
         Process a single chunk of code with context from previous chunks
+        (Non-streaming version for compatibility)
         
         Args:
             chunk: The chunk to process
@@ -123,9 +225,57 @@ Continue building your understanding of this file based on what you've seen so f
             logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
             return f"Error processing chunk: {str(e)}"
     
+    async def process_file_chunks_parallel(self, chunks: List[Dict]) -> str:
+        """
+        Process all chunks of a file in parallel for massive speed improvements
+        
+        Args:
+            chunks: List of chunks from a single file
+            
+        Returns:
+            str: Comprehensive understanding of the file
+        """
+        if not chunks:
+            return ""
+            
+        file_path = chunks[0]["file_path"]
+        logger.info(f"Processing {len(chunks)} chunks from {file_path} in parallel")
+        
+        # Sort chunks by index to maintain order
+        chunks.sort(key=lambda x: x["chunk_index"])
+        
+        # Process chunks in parallel batches of 10-15
+        batch_size = min(15, len(chunks))  # Process up to 15 chunks in parallel
+        semaphore = asyncio.Semaphore(self.concurrency_limit)
+        
+        async def process_chunk_with_semaphore(chunk, is_last):
+            async with semaphore:
+                return await self.process_chunk(chunk, summarize=is_last)
+        
+        # Process chunks in parallel batches
+        all_results = []
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i + batch_size]
+            batch_tasks = []
+            
+            for j, chunk in enumerate(batch):
+                is_last = (i + j == len(chunks) - 1)
+                task = process_chunk_with_semaphore(chunk, is_last)
+                batch_tasks.append(task)
+            
+            # Process batch in parallel
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            all_results.extend(batch_results)
+            
+            logger.info(f"Completed batch {i//batch_size + 1} for {file_path}")
+        
+        # Return the final summary
+        return self.summaries.get(file_path, "No summary generated")
+    
     async def process_file_chunks(self, chunks: List[Dict]) -> str:
         """
         Process all chunks of a file and return a comprehensive understanding
+        (Legacy sequential method - kept for compatibility)
         
         Args:
             chunks: List of chunks from a single file
@@ -150,7 +300,7 @@ Continue building your understanding of this file based on what you've seen so f
     
     async def process_file_chunks_batch(self, all_file_chunks: Dict[str, List[Dict]]) -> Dict[str, str]:
         """
-        Process multiple files in parallel with a concurrency limit
+        Process multiple files in parallel with optimized concurrency limits
         
         Args:
             all_file_chunks: Dictionary mapping file paths to their chunks
@@ -163,7 +313,11 @@ Continue building your understanding of this file based on what you've seen so f
         
         async def process_file_with_semaphore(file_path, chunks):
             async with semaphore:
-                summary = await self.process_file_chunks(chunks)
+                # Use parallel processing for better performance
+                if len(chunks) > 1:
+                    summary = await self.process_file_chunks_parallel(chunks)
+                else:
+                    summary = await self.process_file_chunks(chunks)
                 file_summaries[file_path] = summary
                 logger.info(f"Completed processing {file_path}")
         
@@ -174,7 +328,7 @@ Continue building your understanding of this file based on what you've seen so f
             chunks.sort(key=lambda x: x["chunk_index"])
             tasks.append(process_file_with_semaphore(file_path, chunks))
         
-        # Run tasks with concurrency limit
+        # Run tasks with optimized concurrency limit
         await asyncio.gather(*tasks)
         
         return file_summaries
@@ -207,7 +361,7 @@ Continue building your understanding of this file based on what you've seen so f
                 file_chunks[file_path] = []
             file_chunks[file_path].append(chunk)
         
-        # Process files in parallel with concurrency limit
+        # Process files in parallel with optimized concurrency limit
         file_summaries = await self.process_file_chunks_batch(file_chunks)
         
         return file_summaries

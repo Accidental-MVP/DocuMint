@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/generate", response_model=GenerateResponse)
-def generate_readme(request: GenerateRequest):
+async def generate_readme(request: GenerateRequest):
     """
     Generate a README for a GitHub repository
     """
@@ -38,7 +38,7 @@ def generate_readme(request: GenerateRequest):
             request.mode = GenerationMode.STANDARD
         
         # Call the service to generate the README
-        result = generate_readme_for_repo(
+        result = await generate_readme_for_repo(
             repo_url=str(request.repo_url),
             tone=request.tone.value,
             model=request.model,

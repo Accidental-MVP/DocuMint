@@ -20,7 +20,6 @@ router = APIRouter()
 
 class ReadmeRequest(BaseModel):
     repo_url: str
-    use_async: bool = False
     model: str = "gpt-3.5-turbo"
     max_files: Optional[int] = None
 
@@ -55,17 +54,12 @@ async def create_readme(
             client_max_files=request.max_files
         )
         
-        # Process chunks to understand the repository
-        if request.use_async and len(chunks) > 10:  # Use async for larger repos
-            logger.info(f"Using async processing for {len(chunks)} chunks")
-            reader = AsyncContextAwareReader(model=request.model)
-            file_summaries = await reader.process_repository_chunks(chunks)
-            repo_understanding = await reader.generate_repository_understanding(file_summaries)
-        else:
-            logger.info(f"Using sync processing for {len(chunks)} chunks")
-            reader = ContextAwareReader(model=request.model)
-            file_summaries = reader.process_repository_chunks(chunks)
-            repo_understanding = reader.generate_repository_understanding(file_summaries)
+        # Process chunks to understand the repository with MASSIVE PERFORMANCE IMPROVEMENTS
+        # Always use async processing with parallel chunk processing for better performance
+        logger.info(f"Using optimized async processing with parallel chunks for {len(chunks)} chunks")
+        reader = AsyncContextAwareReader(model=request.model, concurrency_limit=15)  # Increased concurrency for speed
+        file_summaries = await reader.process_repository_chunks(chunks)
+        repo_understanding = await reader.generate_repository_understanding(file_summaries)
         
         # Generate README
         readme_content = generate_readme(repo_understanding, repo_analysis)

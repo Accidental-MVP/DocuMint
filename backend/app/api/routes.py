@@ -67,7 +67,7 @@ async def generate_readme(
     logger.info(f"Received request to generate README for: {repo_url} from user: {current_user.id}")
     
     try:
-        result = generate_readme_for_repo(
+        result = await generate_readme_for_repo(
             repo_url=repo_url,
             tone=tone,
             model=model,
@@ -136,7 +136,7 @@ async def advanced_generate_readme(
     
     try:
         # First get repository understanding and file summaries using the standard method
-        result = generate_readme_for_repo(
+        result = await generate_readme_for_repo(
             repo_url=repo_url,
             tone=tone,
             model="gpt-3.5-turbo",  # Use faster model for initial analysis
@@ -236,7 +236,7 @@ async def stream_generate_readme(
     async def generate_stream():
         try:
             # First get repository understanding and file summaries using the standard method
-            result = generate_readme_for_repo(
+            result = await generate_readme_for_repo(
                 repo_url=repo_url,
                 tone=tone,
                 model="gpt-3.5-turbo",  # Use faster model for initial analysis

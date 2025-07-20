@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 from openai import AsyncOpenAI
 
 from ..config import OPENAI_API_KEY
+from .token_budget import ProactiveTokenCalculator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -25,18 +26,8 @@ class AsyncContextAwareReader:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         
-        # Token budgeting configuration
-        self.max_prompt_tokens = 12000  # Leave space for 2K-4K completion
-        self.max_total_tokens = 13500   # Hard upper cap to be safe
-        self.max_completion_tokens = 4000
-        
-        # Adjust limits based on model
-        if "gpt-4" in model:
-            self.max_prompt_tokens = 12000
-            self.max_total_tokens = 13500
-        else:  # gpt-3.5-turbo
-            self.max_prompt_tokens = 3000
-            self.max_total_tokens = 4000
+        # Initialize proactive token calculator
+        self.token_calculator = ProactiveTokenCalculator(model)
     
     def reset(self):
         """Reset the conversation histories and summaries"""

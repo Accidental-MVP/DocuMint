@@ -4,6 +4,7 @@ from typing import List, Dict, Any, AsyncGenerator
 from openai import AsyncOpenAI
 
 from ..config import OPENAI_API_KEY
+from .token_budget import ProactiveTokenCalculator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -30,18 +31,8 @@ class AsyncContextAwareReader:
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         
-        # Token budgeting configuration
-        self.max_prompt_tokens = 12000  # Leave space for 2K-4K completion
-        self.max_total_tokens = 13500   # Hard upper cap to be safe
-        self.max_completion_tokens = 4000
-        
-        # Adjust limits based on model
-        if "gpt-4" in model:
-            self.max_prompt_tokens = 12000
-            self.max_total_tokens = 13500
-        else:  # gpt-3.5-turbo
-            self.max_prompt_tokens = 3000
-            self.max_total_tokens = 4000
+        # Initialize proactive token calculator
+        self.token_calculator = ProactiveTokenCalculator(model)
     
     def reset(self):
         """Reset the conversation histories and summaries"""
@@ -70,39 +61,33 @@ class AsyncContextAwareReader:
         current_messages = self.conversation_histories.get(file_path, [])
         all_messages = current_messages + new_messages
         
-        # Calculate total tokens
-        total_tokens = self._calculate_messages_tokens(all_messages)
+        # Use proactive token calculator to check if trimming is needed
+        projection = self.token_calculator.project_request_tokens(
+            system_prompt="",
+            user_prompt="",
+            context_chunks=None,
+            conversation_history=all_messages
+        )
         
-        if total_tokens <= self.max_prompt_tokens:
+        if not projection["needs_trimming"]:
             return new_messages
         
-        logger.warning(f"Context overflow detected for {file_path}: {total_tokens} tokens > {self.max_prompt_tokens} limit")
+        logger.warning(f"Context overflow detected for {file_path}: {projection['total_tokens']} tokens > {projection['budget_limit']} limit")
         
-        # Strategy: Keep system messages + recent messages + new messages
-        system_messages = [msg for msg in current_messages if msg["role"] == "system"]
-        recent_messages = []
-        new_message_tokens = self._calculate_messages_tokens(new_messages)
+        # Use the proactive token calculator to trim intelligently
+        trimmed_messages, trimming_info = self.token_calculator.trim_messages_intelligently(all_messages)
         
-        # Reserve space for new messages
-        available_tokens = self.max_prompt_tokens - new_message_tokens - self._calculate_messages_tokens(system_messages)
+        # Extract only the new messages from the trimmed result
+        # Find where the new messages start in the trimmed list
+        new_message_start = len(trimmed_messages) - len(new_messages)
+        if new_message_start >= 0:
+            trimmed_new_messages = trimmed_messages[new_message_start:]
+        else:
+            # If trimming was too aggressive, just return the new messages
+            trimmed_new_messages = new_messages
         
-        # Add recent messages within available space
-        for msg in reversed(current_messages):
-            if msg["role"] == "system":
-                continue
-            msg_tokens = self._estimate_tokens(msg["content"])
-            if msg_tokens <= available_tokens:
-                recent_messages.insert(0, msg)
-                available_tokens -= msg_tokens
-            else:
-                break
-        
-        # Combine and return
-        final_messages = system_messages + recent_messages + new_messages
-        final_tokens = self._calculate_messages_tokens(final_messages)
-        
-        logger.info(f"Truncated context for {file_path}: {total_tokens} → {final_tokens} tokens")
-        return new_messages
+        logger.info(f"Truncated context for {file_path}: {projection['total_tokens']} → {trimming_info['final_tokens']} tokens")
+        return trimmed_new_messages
     
     def _should_retry_with_smaller_context(self, error: Exception) -> bool:
         """Check if we should retry with smaller context"""
@@ -185,16 +170,36 @@ Continue building your understanding of this file based on what you've seen so f
         # Add to conversation history
         self.conversation_histories[file_path].extend(new_messages)
         
-        # Retry logic with smaller context if needed
+        # PROACTIVE TOKEN BUDGETING - Check before making the call
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                # Call OpenAI API with streaming for better performance
+                # Project token usage before making the call
+                projection = self.token_calculator.project_request_tokens(
+                    system_prompt="",
+                    user_prompt="",
+                    context_chunks=None,
+                    conversation_history=self.conversation_histories[file_path]
+                )
+                
+                # If we need trimming, do it proactively
+                if projection["needs_trimming"]:
+                    logger.info(f"Proactive trimming for {file_path}: {projection['total_tokens']} tokens exceed budget ({projection['budget_limit']})")
+                    self.conversation_histories[file_path], trimming_info = self.token_calculator.trim_messages_intelligently(
+                        self.conversation_histories[file_path]
+                    )
+                    logger.info(f"Trimmed {file_path} to {trimming_info['final_tokens']} tokens ({trimming_info['tokens_removed']} removed)")
+                
+                # Calculate optimal completion tokens
+                final_tokens = self.token_calculator.count_messages_tokens(self.conversation_histories[file_path])
+                optimal_completion_tokens = self.token_calculator.get_optimal_completion_tokens(final_tokens)
+                
+                # Call OpenAI API with streaming and proactive budgeting
                 stream = await client.chat.completions.create(
                     model=self.model,
                     messages=self.conversation_histories[file_path],
                     temperature=0.3,
-                    max_tokens=min(1000, self.max_completion_tokens),
+                    max_tokens=min(1000, optimal_completion_tokens),
                     stream=True  # Enable streaming for better performance
                 )
                 
@@ -220,12 +225,40 @@ Continue building your understanding of this file based on what you've seen so f
                 break  # Success, exit retry loop
                 
             except Exception as e:
-                if attempt < max_retries - 1 and self._should_retry_with_smaller_context(e):
-                    logger.warning(f"Token limit exceeded for {file_path}, retrying with smaller context (attempt {attempt + 1})")
-                    # Clear conversation history and retry with just this chunk
-                    self.conversation_histories[file_path] = new_messages
+                error_msg = str(e).lower()
+                
+                # Check if it's a token limit error (should be rare now with proactive budgeting)
+                if "context_length_exceeded" in error_msg or "maximum_context_length" in error_msg:
+                    logger.warning(f"Token limit exceeded for {file_path} despite proactive budgeting. Emergency truncation (attempt {attempt + 1})")
+                    
+                    # Emergency fallback: keep only essential messages
+                    system_msg = next((msg for msg in self.conversation_histories[file_path] if msg.get("role") == "system"), None)
+                    last_user_msg = next((msg for msg in reversed(self.conversation_histories[file_path]) if msg.get("role") == "user"), None)
+                    
+                    emergency_messages = []
+                    if system_msg:
+                        emergency_messages.append(system_msg)
+                    if last_user_msg:
+                        emergency_messages.append(last_user_msg)
+                    
+                    if len(emergency_messages) < 2:
+                        logger.error(f"Cannot create emergency messages for {file_path}. Giving up.")
+                        error_msg = f"Error processing chunk: Token limit exceeded and cannot create emergency messages"
+                        yield error_msg
+                        break
+                    
+                    self.conversation_histories[file_path] = emergency_messages
+                    logger.info(f"Emergency truncation for {file_path} to {len(emergency_messages)} messages")
+                    continue
+                
+                # For other errors, retry with exponential backoff
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"OpenAI API error for {file_path} on attempt {attempt + 1}: {e}. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
                 else:
-                    logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
+                    logger.error(f"OpenAI API failed for {file_path} after {max_retries} attempts: {e}")
                     error_msg = f"Error processing chunk: {str(e)}"
                     yield error_msg
                     break
@@ -301,16 +334,36 @@ Continue building your understanding of this file based on what you've seen so f
         # Add to conversation history
         self.conversation_histories[file_path].extend(new_messages)
         
-        # Retry logic with smaller context if needed
+        # PROACTIVE TOKEN BUDGETING - Check before making the call
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                # Call OpenAI API
+                # Project token usage before making the call
+                projection = self.token_calculator.project_request_tokens(
+                    system_prompt="",
+                    user_prompt="",
+                    context_chunks=None,
+                    conversation_history=self.conversation_histories[file_path]
+                )
+                
+                # If we need trimming, do it proactively
+                if projection["needs_trimming"]:
+                    logger.info(f"Proactive trimming for {file_path}: {projection['total_tokens']} tokens exceed budget ({projection['budget_limit']})")
+                    self.conversation_histories[file_path], trimming_info = self.token_calculator.trim_messages_intelligently(
+                        self.conversation_histories[file_path]
+                    )
+                    logger.info(f"Trimmed {file_path} to {trimming_info['final_tokens']} tokens ({trimming_info['tokens_removed']} removed)")
+                
+                # Calculate optimal completion tokens
+                final_tokens = self.token_calculator.count_messages_tokens(self.conversation_histories[file_path])
+                optimal_completion_tokens = self.token_calculator.get_optimal_completion_tokens(final_tokens)
+                
+                # Call OpenAI API with proactive budgeting
                 response = await client.chat.completions.create(
                     model=self.model,
                     messages=self.conversation_histories[file_path],
                     temperature=0.3,
-                    max_tokens=min(1000, self.max_completion_tokens)
+                    max_tokens=min(1000, optimal_completion_tokens)
                 )
                 
                 # Track token usage
@@ -330,12 +383,38 @@ Continue building your understanding of this file based on what you've seen so f
                 return assistant_message
                 
             except Exception as e:
-                if attempt < max_retries - 1 and self._should_retry_with_smaller_context(e):
-                    logger.warning(f"Token limit exceeded for {file_path}, retrying with smaller context (attempt {attempt + 1})")
-                    # Clear conversation history and retry with just this chunk
-                    self.conversation_histories[file_path] = new_messages
+                error_msg = str(e).lower()
+                
+                # Check if it's a token limit error (should be rare now with proactive budgeting)
+                if "context_length_exceeded" in error_msg or "maximum_context_length" in error_msg:
+                    logger.warning(f"Token limit exceeded for {file_path} despite proactive budgeting. Emergency truncation (attempt {attempt + 1})")
+                    
+                    # Emergency fallback: keep only essential messages
+                    system_msg = next((msg for msg in self.conversation_histories[file_path] if msg.get("role") == "system"), None)
+                    last_user_msg = next((msg for msg in reversed(self.conversation_histories[file_path]) if msg.get("role") == "user"), None)
+                    
+                    emergency_messages = []
+                    if system_msg:
+                        emergency_messages.append(system_msg)
+                    if last_user_msg:
+                        emergency_messages.append(last_user_msg)
+                    
+                    if len(emergency_messages) < 2:
+                        logger.error(f"Cannot create emergency messages for {file_path}. Giving up.")
+                        return f"Error processing chunk: Token limit exceeded and cannot create emergency messages"
+                    
+                    self.conversation_histories[file_path] = emergency_messages
+                    logger.info(f"Emergency truncation for {file_path} to {len(emergency_messages)} messages")
+                    continue
+                
+                # For other errors, retry with exponential backoff
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"OpenAI API error for {file_path} on attempt {attempt + 1}: {e}. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
                 else:
-                    logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
+                    logger.error(f"OpenAI API failed for {file_path} after {max_retries} attempts: {e}")
                     return f"Error processing chunk: {str(e)}"
     
     async def process_file_chunks_parallel(self, chunks: List[Dict]) -> str:
@@ -507,36 +586,63 @@ Continue building your understanding of this file based on what you've seen so f
                 continue
             user_message += f"## {file_path}\n{summary}\n\n"
         
-        # Check token limits for repository understanding
+        # PROACTIVE TOKEN BUDGETING for repository understanding
         messages = [
             {"role": "system", "content": system_message},
             {"role": "user", "content": user_message}
         ]
         
-        total_tokens = self._calculate_messages_tokens(messages)
-        if total_tokens > self.max_prompt_tokens:
-            logger.warning(f"Repository understanding prompt too large ({total_tokens} tokens), truncating")
-            # Truncate by keeping only the most important files
+        # Project token usage before making the call
+        projection = self.token_calculator.project_request_tokens(
+            system_prompt=system_message,
+            user_prompt=user_message
+        )
+        
+        # If we need trimming, do it proactively
+        if projection["needs_trimming"]:
+            logger.info(f"Proactive trimming for repository understanding: {projection['total_tokens']} tokens exceed budget ({projection['budget_limit']})")
+            
+            # Intelligently trim by keeping only the most important files
             user_message = "Based on the following file summaries, provide a comprehensive understanding of the repository's purpose, structure, and functionality:\n\n"
             file_count = 0
             for file_path, summary in file_summaries.items():
                 if file_path == "dummy.txt":
                     continue
-                user_message += f"## {file_path}\n{summary[:500]}...\n\n"  # Truncate each summary
+                
+                # Truncate each summary to fit within budget
+                truncated_summary = summary[:300] + "..." if len(summary) > 300 else summary
+                user_message += f"## {file_path}\n{truncated_summary}\n\n"
                 file_count += 1
-                if file_count >= 5:  # Limit to 5 most important files
-                    break
-        
-        try:
-            # Call OpenAI API
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[
+                
+                # Check if we're still over budget after adding this file
+                test_messages = [
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": user_message}
-                ],
+                ]
+                test_tokens = self.token_calculator.count_messages_tokens(test_messages)
+                
+                if test_tokens > projection["budget_limit"]:
+                    logger.info(f"Stopping at {file_count} files to stay within budget")
+                    break
+                
+                if file_count >= 10:  # Hard limit
+                    break
+        
+        # Calculate optimal completion tokens
+        final_messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
+        final_tokens = self.token_calculator.count_messages_tokens(final_messages)
+        optimal_completion_tokens = self.token_calculator.get_optimal_completion_tokens(final_tokens)
+        
+        try:
+            # Call OpenAI API with proactive budgeting
+            response = await client.chat.completions.create(
+                model=self.model,
+                messages=final_messages,
                 temperature=0.3,
-                max_tokens=min(2000, self.max_completion_tokens)
+                max_tokens=min(2000, optimal_completion_tokens)
             )
             
             # Track token usage

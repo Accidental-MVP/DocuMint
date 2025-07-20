@@ -50,17 +50,21 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         
         # Process chunks with MASSIVE PERFORMANCE IMPROVEMENTS using parallel processing
         logger.info("Processing file chunks with optimized parallel processing")
+        from ..config import PHASE_MODELS
         
-        # Create async reader with optimized concurrency
-        reader = AsyncContextAwareReader(model="gpt-3.5-turbo", concurrency_limit=15)
+        # Create async reader with cost-optimized model for chunking
+        chunking_model = PHASE_MODELS["chunking"]  # gpt-4o-mini for speed + cost
+        logger.info(f"Using {chunking_model} for chunk processing (cost-optimized)")
+        reader = AsyncContextAwareReader(model=chunking_model, concurrency_limit=15)
         
         # Process chunks in parallel for massive speed improvements
         file_summaries = await reader.process_repository_chunks(chunks)
         
-        # Generate repository understanding
+        # Generate repository understanding with cost-optimized model
         logger.info("Generating repository understanding")
-        # Use GPT-4 Turbo for the final repository understanding to handle larger context
-        understanding_reader = AsyncContextAwareReader(model="gpt-4-1106-preview", concurrency_limit=15)
+        understanding_model = PHASE_MODELS["understanding"]  # gpt-4o for strong reasoning
+        logger.info(f"Using {understanding_model} for repository understanding (cost-optimized)")
+        understanding_reader = AsyncContextAwareReader(model=understanding_model, concurrency_limit=15)
         repo_understanding = await understanding_reader.generate_repository_understanding(file_summaries)
         
         # Combine processing metadata from async readers

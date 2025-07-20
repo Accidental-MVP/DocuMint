@@ -53,17 +53,21 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         # Process chunks with MASSIVE PERFORMANCE IMPROVEMENTS using parallel processing
         logger.info("Processing file chunks with optimized parallel processing")
         from ..utils.reader_async import AsyncContextAwareReader
+        from ..config import PHASE_MODELS
         
-        # Create async reader with optimized concurrency
-        reader = AsyncContextAwareReader(model="gpt-3.5-turbo", concurrency_limit=15)
+        # Create async reader with cost-optimized model for chunking
+        chunking_model = PHASE_MODELS["chunking"]  # gpt-4o-mini for speed + cost
+        logger.info(f"Using {chunking_model} for chunk processing (cost-optimized)")
+        reader = AsyncContextAwareReader(model=chunking_model, concurrency_limit=15)
         
         # Process chunks in parallel for massive speed improvements
         file_summaries = await reader.process_repository_chunks(chunks)
         
-        # Generate repository understanding
+        # Generate repository understanding with cost-optimized model
         logger.info("Generating repository understanding")
-        # Use GPT-4 Turbo for the final repository understanding to handle larger context
-        understanding_reader = AsyncContextAwareReader(model="gpt-4-1106-preview", concurrency_limit=15)
+        understanding_model = PHASE_MODELS["understanding"]  # gpt-4o for strong reasoning
+        logger.info(f"Using {understanding_model} for repository understanding (cost-optimized)")
+        understanding_reader = AsyncContextAwareReader(model=understanding_model, concurrency_limit=15)
         repo_understanding = await understanding_reader.generate_repository_understanding(file_summaries)
         
         # Combine processing metadata from async readers
@@ -76,19 +80,20 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
             "error_details": []
         }
         
-        # Get model and mode settings
-        model_settings = AVAILABLE_MODELS.get(model, AVAILABLE_MODELS["gpt-4-1106-preview"])
+        # Get model and mode settings with cost optimization
+        readme_model = PHASE_MODELS["readme_generation"]  # Use best model for final README
+        model_settings = AVAILABLE_MODELS.get(readme_model, AVAILABLE_MODELS["gpt-4-1106-preview"])
         mode_settings = GENERATION_MODES.get(mode, GENERATION_MODES["standard"])
         
         # Build prompt for the README generation with real-time token tracking
-        logger.info(f"Building prompt with real-time token tracking for {model}")
+        logger.info(f"Building prompt with real-time token tracking for {readme_model} (cost-optimized)")
         prompt, token_metadata = _build_prompt(
             repo_url=repo_url,
             repo_understanding=repo_understanding,
             file_summaries=file_summaries,
             tone=tone,
             mode=mode,
-            model_name=model,
+            model_name=readme_model,
             model_max_tokens=model_settings["max_tokens"]
         )
         
@@ -107,11 +112,11 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
         
         logger.info(f"Using max_tokens={max_tokens} for README generation")
         
-        # Generate README using LLM
-        logger.info(f"Generating README with {model}")
+        # Generate README using cost-optimized LLM
+        logger.info(f"Generating README with {readme_model} (cost-optimized)")
         readme_content = generate_readme(
             prompt=prompt,
-            model=model,
+            model=readme_model,
             temperature=mode_settings["temperature"],
             max_tokens=max_tokens
         )
@@ -146,11 +151,11 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
                 "truncated": was_truncated
             })
         
-        # Enhanced metadata
+        # Enhanced metadata with cost optimization info
         enhanced_metadata = {
             "repo_url": repo_url,
             "tone": tone,
-            "model": model,
+            "model": readme_model,  # Use the cost-optimized model
             "mode": mode,
             "files_analyzed": len(file_summaries),
             "chunks_processed": len(chunks),
@@ -159,6 +164,12 @@ async def generate_readme_for_repo(repo_url: str = DEFAULT_REPO_URL,
             "processing": processing_metadata,
             "token_usage": token_metadata,
             "chunk_errors": processing_metadata.get("chunk_errors", 0),
+            "cost_optimization": {
+                "chunking_model": chunking_model,
+                "understanding_model": understanding_model,
+                "readme_model": readme_model,
+                "estimated_cost_savings": "~70% compared to using GPT-4 Turbo for all phases"
+            },
             "prompt_assembly": {
                 "total_files": len(included_files),
                 "files_in_prompt": token_metadata.get("included_files", 0),

@@ -54,6 +54,18 @@ class ProactiveTokenCalculator:
                 max_prompt_tokens=120000,  # Leave 8K for completion
                 max_completion_tokens=8000
             )
+        elif "gpt-4o" in model:
+            return TokenBudget(
+                max_total_tokens=128000,
+                max_prompt_tokens=120000,  # Leave 8K for completion
+                max_completion_tokens=8000
+            )
+        elif "gpt-4o-mini" in model:
+            return TokenBudget(
+                max_total_tokens=16385,
+                max_prompt_tokens=12000,  # Leave 4K for completion
+                max_completion_tokens=4000
+            )
         elif "gpt-4" in model:
             return TokenBudget(
                 max_total_tokens=8192,

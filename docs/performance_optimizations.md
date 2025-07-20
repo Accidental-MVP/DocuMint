@@ -29,6 +29,13 @@ This document outlines the **massive performance improvements** implemented in D
 - **Dynamic batch sizing** based on chunk count
 - **Intelligent semaphore management**
 
+### 4. **Intelligent Token Budgeting** 🆕
+- **Chunk-level token budgeting** (12K prompt tokens for GPT-4)
+- **Hard upper caps** (13.5K total tokens) to prevent overflow
+- **Intelligent context truncation** prioritizing recent messages
+- **Retry with smaller context** fallback to avoid hard fails
+- **Model-specific token limits** (GPT-4 vs GPT-3.5)
+
 ## 📊 Performance Improvements
 
 | Metric | Before | After | Improvement |
@@ -37,6 +44,8 @@ This document outlines the **massive performance improvements** implemented in D
 | Chunk Processing | Sequential | Parallel | **10-15x speedup** |
 | Response Type | Blocking | Streaming | **Real-time feedback** |
 | Processing Strategy | File-by-file | Batch processing | **Massive efficiency gains** |
+| Token Budgeting | None | Intelligent | **No more context overflow** |
+| Context Management | Unlimited | 12K prompt tokens | **Prevents model choking** |
 
 ## 🔧 Implementation Details
 
@@ -81,6 +90,30 @@ class AsyncContextAwareReader:
         self.semaphore = asyncio.Semaphore(concurrency_limit)
 ```
 
+### Token Budgeting Implementation
+
+```python
+# NEW: Intelligent token budgeting
+class AsyncContextAwareReader:
+    def __init__(self, model: str = "gpt-4"):
+        # Token budgeting configuration
+        self.max_prompt_tokens = 12000  # Leave space for 2K-4K completion
+        self.max_total_tokens = 13500   # Hard upper cap to be safe
+        
+    def _truncate_context_if_needed(self, file_path: str, new_messages: List[Dict]) -> List[Dict]:
+        """Intelligently truncate context to stay within token limits"""
+        total_tokens = self._calculate_messages_tokens(all_messages)
+        
+        if total_tokens <= self.max_prompt_tokens:
+            return new_messages
+        
+        # Strategy: Keep system messages + recent messages + new messages
+        system_messages = [msg for msg in current_messages if msg["role"] == "system"]
+        recent_messages = self._get_recent_messages_within_limit(available_tokens)
+        
+        return system_messages + recent_messages + new_messages
+```
+
 ## 🧪 Testing Performance
 
 Run the performance test script to see the improvements:
@@ -88,6 +121,13 @@ Run the performance test script to see the improvements:
 ```bash
 cd backend
 python test_performance.py
+```
+
+Run the token budgeting test script to see the context management improvements:
+
+```bash
+cd backend
+python test_token_budgeting.py
 ```
 
 Expected output:

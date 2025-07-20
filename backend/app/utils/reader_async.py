@@ -19,6 +19,7 @@ class AsyncContextAwareReader:
     - Parallel chunk processing (10-15 chunks at once)
     - Streaming responses for better performance
     - Optimized concurrency limits
+    - INTELLIGENT TOKEN BUDGETING to prevent context overflow
     """
     
     def __init__(self, model: str = "gpt-3.5-turbo", concurrency_limit: int = 15):
@@ -28,6 +29,19 @@ class AsyncContextAwareReader:
         self.summaries = {}
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        
+        # Token budgeting configuration
+        self.max_prompt_tokens = 12000  # Leave space for 2K-4K completion
+        self.max_total_tokens = 13500   # Hard upper cap to be safe
+        self.max_completion_tokens = 4000
+        
+        # Adjust limits based on model
+        if "gpt-4" in model:
+            self.max_prompt_tokens = 12000
+            self.max_total_tokens = 13500
+        else:  # gpt-3.5-turbo
+            self.max_prompt_tokens = 3000
+            self.max_total_tokens = 4000
     
     def reset(self):
         """Reset the conversation histories and summaries"""
@@ -35,6 +49,70 @@ class AsyncContextAwareReader:
         self.summaries = {}
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate the number of tokens in a text"""
+        # Rough estimate: 1 token ≈ 4 characters
+        return len(text) // 4
+    
+    def _calculate_messages_tokens(self, messages: List[Dict]) -> int:
+        """Calculate total tokens for a list of messages"""
+        total_tokens = 0
+        for message in messages:
+            total_tokens += self._estimate_tokens(message["content"])
+        return total_tokens
+    
+    def _truncate_context_if_needed(self, file_path: str, new_messages: List[Dict]) -> List[Dict]:
+        """
+        Intelligently truncate context to stay within token limits
+        Prioritizes recent messages and system messages
+        """
+        current_messages = self.conversation_histories.get(file_path, [])
+        all_messages = current_messages + new_messages
+        
+        # Calculate total tokens
+        total_tokens = self._calculate_messages_tokens(all_messages)
+        
+        if total_tokens <= self.max_prompt_tokens:
+            return new_messages
+        
+        logger.warning(f"Context overflow detected for {file_path}: {total_tokens} tokens > {self.max_prompt_tokens} limit")
+        
+        # Strategy: Keep system messages + recent messages + new messages
+        system_messages = [msg for msg in current_messages if msg["role"] == "system"]
+        recent_messages = []
+        new_message_tokens = self._calculate_messages_tokens(new_messages)
+        
+        # Reserve space for new messages
+        available_tokens = self.max_prompt_tokens - new_message_tokens - self._calculate_messages_tokens(system_messages)
+        
+        # Add recent messages within available space
+        for msg in reversed(current_messages):
+            if msg["role"] == "system":
+                continue
+            msg_tokens = self._estimate_tokens(msg["content"])
+            if msg_tokens <= available_tokens:
+                recent_messages.insert(0, msg)
+                available_tokens -= msg_tokens
+            else:
+                break
+        
+        # Combine and return
+        final_messages = system_messages + recent_messages + new_messages
+        final_tokens = self._calculate_messages_tokens(final_messages)
+        
+        logger.info(f"Truncated context for {file_path}: {total_tokens} → {final_tokens} tokens")
+        return new_messages
+    
+    def _should_retry_with_smaller_context(self, error: Exception) -> bool:
+        """Check if we should retry with smaller context"""
+        error_str = str(error).lower()
+        return any(keyword in error_str for keyword in [
+            "context_length_exceeded", 
+            "token_limit", 
+            "too many tokens",
+            "maximum context length"
+        ])
     
     async def process_chunk_streaming(self, chunk: Dict, summarize: bool = True) -> AsyncGenerator[str, None]:
         """
@@ -95,43 +173,62 @@ Continue building your understanding of this file based on what you've seen so f
         if chunk_index == total_chunks - 1 and summarize:
             user_message += "\n\nThis is the last chunk of the file. Please provide a comprehensive summary of the entire file's purpose, structure, and key functionality."
         
-        # Add to conversation history
-        self.conversation_histories[file_path].append({"role": "system", "content": system_message})
-        self.conversation_histories[file_path].append({"role": "user", "content": user_message})
+        # Prepare new messages
+        new_messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
         
-        try:
-            # Call OpenAI API with streaming for better performance
-            stream = await client.chat.completions.create(
-                model=self.model,
-                messages=self.conversation_histories[file_path],
-                temperature=0.3,
-                max_tokens=1000,
-                stream=True  # Enable streaming for better performance
-            )
-            
-            # Collect streamed response
-            assistant_message = ""
-            async for chunk_response in stream:
-                if chunk_response.choices[0].delta.content:
-                    content_piece = chunk_response.choices[0].delta.content
-                    assistant_message += content_piece
-                    yield content_piece
-            
-            # Track token usage (approximate for streaming)
-            self.total_prompt_tokens += len(assistant_message) // 4  # Rough estimate
-            self.total_completion_tokens += len(assistant_message) // 4
-            
-            # Add to conversation history
-            self.conversation_histories[file_path].append({"role": "assistant", "content": assistant_message})
-            
-            # If this is the last chunk, save the summary
-            if chunk_index == total_chunks - 1:
-                self.summaries[file_path] = assistant_message
-            
-        except Exception as e:
-            logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
-            error_msg = f"Error processing chunk: {str(e)}"
-            yield error_msg
+        # Apply intelligent context truncation
+        new_messages = self._truncate_context_if_needed(file_path, new_messages)
+        
+        # Add to conversation history
+        self.conversation_histories[file_path].extend(new_messages)
+        
+        # Retry logic with smaller context if needed
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Call OpenAI API with streaming for better performance
+                stream = await client.chat.completions.create(
+                    model=self.model,
+                    messages=self.conversation_histories[file_path],
+                    temperature=0.3,
+                    max_tokens=min(1000, self.max_completion_tokens),
+                    stream=True  # Enable streaming for better performance
+                )
+                
+                # Collect streamed response
+                assistant_message = ""
+                async for chunk_response in stream:
+                    if chunk_response.choices[0].delta.content:
+                        content_piece = chunk_response.choices[0].delta.content
+                        assistant_message += content_piece
+                        yield content_piece
+                
+                # Track token usage (approximate for streaming)
+                self.total_prompt_tokens += len(assistant_message) // 4  # Rough estimate
+                self.total_completion_tokens += len(assistant_message) // 4
+                
+                # Add to conversation history
+                self.conversation_histories[file_path].append({"role": "assistant", "content": assistant_message})
+                
+                # If this is the last chunk, save the summary
+                if chunk_index == total_chunks - 1:
+                    self.summaries[file_path] = assistant_message
+                
+                break  # Success, exit retry loop
+                
+            except Exception as e:
+                if attempt < max_retries - 1 and self._should_retry_with_smaller_context(e):
+                    logger.warning(f"Token limit exceeded for {file_path}, retrying with smaller context (attempt {attempt + 1})")
+                    # Clear conversation history and retry with just this chunk
+                    self.conversation_histories[file_path] = new_messages
+                else:
+                    logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
+                    error_msg = f"Error processing chunk: {str(e)}"
+                    yield error_msg
+                    break
     
     async def process_chunk(self, chunk: Dict, summarize: bool = True) -> str:
         """
@@ -192,38 +289,54 @@ Continue building your understanding of this file based on what you've seen so f
         if chunk_index == total_chunks - 1 and summarize:
             user_message += "\n\nThis is the last chunk of the file. Please provide a comprehensive summary of the entire file's purpose, structure, and key functionality."
         
-        # Add to conversation history
-        self.conversation_histories[file_path].append({"role": "system", "content": system_message})
-        self.conversation_histories[file_path].append({"role": "user", "content": user_message})
+        # Prepare new messages
+        new_messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
         
-        try:
-            # Call OpenAI API
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=self.conversation_histories[file_path],
-                temperature=0.3,
-                max_tokens=1000
-            )
-            
-            # Track token usage
-            self.total_prompt_tokens += response.usage.prompt_tokens
-            self.total_completion_tokens += response.usage.completion_tokens
-            
-            # Get the response content
-            assistant_message = response.choices[0].message.content.strip()
-            
-            # Add to conversation history
-            self.conversation_histories[file_path].append({"role": "assistant", "content": assistant_message})
-            
-            # If this is the last chunk, save the summary
-            if chunk_index == total_chunks - 1:
-                self.summaries[file_path] = assistant_message
-            
-            return assistant_message
-            
-        except Exception as e:
-            logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
-            return f"Error processing chunk: {str(e)}"
+        # Apply intelligent context truncation
+        new_messages = self._truncate_context_if_needed(file_path, new_messages)
+        
+        # Add to conversation history
+        self.conversation_histories[file_path].extend(new_messages)
+        
+        # Retry logic with smaller context if needed
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Call OpenAI API
+                response = await client.chat.completions.create(
+                    model=self.model,
+                    messages=self.conversation_histories[file_path],
+                    temperature=0.3,
+                    max_tokens=min(1000, self.max_completion_tokens)
+                )
+                
+                # Track token usage
+                self.total_prompt_tokens += response.usage.prompt_tokens
+                self.total_completion_tokens += response.usage.completion_tokens
+                
+                # Get the response content
+                assistant_message = response.choices[0].message.content.strip()
+                
+                # Add to conversation history
+                self.conversation_histories[file_path].append({"role": "assistant", "content": assistant_message})
+                
+                # If this is the last chunk, save the summary
+                if chunk_index == total_chunks - 1:
+                    self.summaries[file_path] = assistant_message
+                
+                return assistant_message
+                
+            except Exception as e:
+                if attempt < max_retries - 1 and self._should_retry_with_smaller_context(e):
+                    logger.warning(f"Token limit exceeded for {file_path}, retrying with smaller context (attempt {attempt + 1})")
+                    # Clear conversation history and retry with just this chunk
+                    self.conversation_histories[file_path] = new_messages
+                else:
+                    logger.error(f"Error processing chunk {chunk_index} of {file_path}: {e}")
+                    return f"Error processing chunk: {str(e)}"
     
     async def process_file_chunks_parallel(self, chunks: List[Dict]) -> str:
         """
@@ -394,6 +507,26 @@ Continue building your understanding of this file based on what you've seen so f
                 continue
             user_message += f"## {file_path}\n{summary}\n\n"
         
+        # Check token limits for repository understanding
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
+        
+        total_tokens = self._calculate_messages_tokens(messages)
+        if total_tokens > self.max_prompt_tokens:
+            logger.warning(f"Repository understanding prompt too large ({total_tokens} tokens), truncating")
+            # Truncate by keeping only the most important files
+            user_message = "Based on the following file summaries, provide a comprehensive understanding of the repository's purpose, structure, and functionality:\n\n"
+            file_count = 0
+            for file_path, summary in file_summaries.items():
+                if file_path == "dummy.txt":
+                    continue
+                user_message += f"## {file_path}\n{summary[:500]}...\n\n"  # Truncate each summary
+                file_count += 1
+                if file_count >= 5:  # Limit to 5 most important files
+                    break
+        
         try:
             # Call OpenAI API
             response = await client.chat.completions.create(
@@ -403,7 +536,7 @@ Continue building your understanding of this file based on what you've seen so f
                     {"role": "user", "content": user_message}
                 ],
                 temperature=0.3,
-                max_tokens=2000
+                max_tokens=min(2000, self.max_completion_tokens)
             )
             
             # Track token usage

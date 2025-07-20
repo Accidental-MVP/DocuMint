@@ -17,13 +17,26 @@ class AsyncContextAwareReader:
     Processes file chunks asynchronously while maintaining context between chunks
     """
     
-    def __init__(self, model: str = "gpt-3.5-turbo", concurrency_limit: int = 3):
+    def __init__(self, model: str = "gpt-3.5-turbo", concurrency_limit: int = 15):
         self.model = model
-        self.concurrency_limit = concurrency_limit  # Limit concurrent API calls
+        self.concurrency_limit = concurrency_limit  # Increased from 3 to 15 for massive speed improvements
         self.conversation_histories = {}
         self.summaries = {}
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        
+        # Token budgeting configuration
+        self.max_prompt_tokens = 12000  # Leave space for 2K-4K completion
+        self.max_total_tokens = 13500   # Hard upper cap to be safe
+        self.max_completion_tokens = 4000
+        
+        # Adjust limits based on model
+        if "gpt-4" in model:
+            self.max_prompt_tokens = 12000
+            self.max_total_tokens = 13500
+        else:  # gpt-3.5-turbo
+            self.max_prompt_tokens = 3000
+            self.max_total_tokens = 4000
     
     def reset(self):
         """Reset the conversation histories and summaries"""

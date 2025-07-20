@@ -10,18 +10,15 @@ import { ReadmeTone, GenerationMode } from '@/lib/api/client'
 
 export type ToneOption = ReadmeTone
 export type ModelOption = string
-export type ModeOption = GenerationMode
 
 interface GenerationSettingsProps {
   onSettingsChange: (settings: {
     tone: ToneOption
     model: ModelOption
-    mode: ModeOption
   }) => void
   defaultSettings?: {
     tone: ToneOption
     model: ModelOption
-    mode: ModeOption
   }
 }
 
@@ -29,37 +26,28 @@ export function GenerationSettings({
   onSettingsChange,
   defaultSettings = {
     tone: 'professional',
-    model: 'gpt-4',
-    mode: 'standard'
+    model: 'gpt-4-1106-preview'
   }
 }: GenerationSettingsProps) {
   const [settings, setSettings] = useState(defaultSettings)
   const [isMounted, setIsMounted] = useState(false)
   const [models, setModels] = useState<ModelInfo[]>([])
-  const [modes, setModes] = useState<ModeInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
   
   useEffect(() => {
     setIsMounted(true)
     
-    // Fetch models and modes from API
+    // Fetch models from API
     const fetchData = async () => {
       setIsLoading(true)
       try {
-        const [modelsData, modesData] = await Promise.all([
-          getAvailableModels(),
-          getGenerationModes()
-        ])
+        const modelsData = await getAvailableModels()
         
         if (modelsData.length > 0) {
           setModels(modelsData)
         }
-        
-        if (modesData.length > 0) {
-          setModes(modesData)
-        }
       } catch (error) {
-        console.error('Error fetching models or modes:', error)
+        console.error('Error fetching models:', error)
       } finally {
         setIsLoading(false)
       }
@@ -87,7 +75,7 @@ export function GenerationSettings({
             Generation Settings
           </CardTitle>
           <CardDescription>
-            Customize how your README is generated
+            Customize your enhanced README generation with oracle-level analysis
           </CardDescription>
         </CardHeader>
         <CardContent className="h-[300px] flex items-center justify-center">
@@ -159,13 +147,13 @@ export function GenerationSettings({
                 ))
               ) : (
                 <>
-                  <TabsTrigger value="gpt-4" className="flex items-center gap-1">
+                  <TabsTrigger value="gpt-4-1106-preview" className="flex items-center gap-1">
                     <Sparkles className="h-4 w-4" />
-                    GPT-4
+                    GPT-4 Turbo
                   </TabsTrigger>
-                  <TabsTrigger value="gpt-3.5-turbo" className="flex items-center gap-1">
+                  <TabsTrigger value="gpt-4o-mini" className="flex items-center gap-1">
                     <Code className="h-4 w-4" />
-                    GPT-3.5 Turbo
+                    GPT-4o Mini
                   </TabsTrigger>
                 </>
               )}
@@ -173,41 +161,13 @@ export function GenerationSettings({
           </Tabs>
           <p className="text-xs text-muted-foreground mt-1">
             {models.find(m => m.id === settings.model)?.description || 
-              (settings.model === 'gpt-4' 
-                ? 'Most powerful model, best for complex README generation' 
-                : 'Faster and more cost-effective model')}
+              (settings.model === 'gpt-4-1106-preview' 
+                ? 'Most powerful model with oracle-level repository analysis' 
+                : 'Faster and more cost-effective model with enhanced analysis')}
           </p>
         </div>
 
-        {/* Mode Selection */}
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Detail Level</h3>
-          <Tabs
-            defaultValue={settings.mode}
-            onValueChange={(value) => updateSettings('mode', value as ModeOption)}
-            className="w-full"
-          >
-            <TabsList className="grid w-full grid-cols-4">
-              {modes.length > 0 ? (
-                modes.map(mode => (
-                  <TabsTrigger key={mode.id} value={mode.id}>
-                    {mode.name}
-                  </TabsTrigger>
-                ))
-              ) : (
-                <>
-                  <TabsTrigger value="standard">Standard</TabsTrigger>
-                  <TabsTrigger value="detailed">Detailed</TabsTrigger>
-                  <TabsTrigger value="concise">Concise</TabsTrigger>
-                  <TabsTrigger value="creative">Creative</TabsTrigger>
-                </>
-              )}
-            </TabsList>
-          </Tabs>
-          <p className="text-xs text-muted-foreground mt-1">
-            {modes.find(m => m.id === settings.mode)?.description || ''}
-          </p>
-        </div>
+
       </CardContent>
     </Card>
   )

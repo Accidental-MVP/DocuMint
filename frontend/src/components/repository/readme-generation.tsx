@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, AlertCircle, Check, Loader2 } from 'lucide-react';
-import { GenerationSettings, ToneOption, ModelOption, ModeOption } from '../../../../src/components/repository/generation-settings';
+import { GenerationSettings, ToneOption, ModelOption } from '../../../../src/components/repository/generation-settings';
 import { apiClient } from '@/lib/api-client';
 import ReactMarkdown from 'react-markdown';
 
@@ -20,8 +20,7 @@ export function ReadmeGeneration({ repoUrl }: ReadmeGenerationProps) {
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState({
     tone: 'professional' as ToneOption,
-    model: 'gpt-4' as ModelOption,
-    mode: 'standard' as ModeOption
+    model: 'gpt-4-1106-preview' as ModelOption
   });
 
   const handleSettingsChange = (newSettings: any) => {
@@ -37,8 +36,7 @@ export function ReadmeGeneration({ repoUrl }: ReadmeGenerationProps) {
       const response = await apiClient.post('/generate', {
         repo_url: repoUrl,
         tone: settings.tone,
-        model: settings.model,
-        mode: settings.mode
+        model: settings.model
       });
       
       if (response.data.success) {
@@ -59,10 +57,10 @@ export function ReadmeGeneration({ repoUrl }: ReadmeGenerationProps) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5" />
-            README Generation
+            Enhanced README Generation
           </CardTitle>
           <CardDescription>
-            Generate a README for your GitHub repository
+            Generate a README using oracle-level repository analysis for the best results
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

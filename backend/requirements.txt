@@ -13,3 +13,6 @@ passlib[bcrypt]==1.7.4
 supabase==2.3.0
 fastapi-users[sqlalchemy]==12.1.2
 requests>=2.31.0
+PyYAML>=6.0.1
+toml>=0.10.2
+xmltodict>=0.13.0

@@ -22,17 +22,11 @@ Every README generator works on a toy repo and falls over on a real one, because
 repositories **do not fit in a context window**. The problem is not writing prose — it is
 deciding what the model gets to read.
 
-```mermaid
-flowchart LR
-    U(["GitHub URL"]) --> W["walk the tree"]
-    W --> S{"worth reading?"}
-    S -- "entrypoints, config,<br/>public API" --> K["keep"]
-    S -- "vendored, generated,<br/>lockfiles, assets" --> D["drop"]
-    K --> CH["chunk to fit<br/>the context window"]
-    CH --> L["LLM"]
-    L --> R(["README"])
-    L -. "tokens counted<br/>per user" .-> M[("usage ledger")]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/flow-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/flow-light.png">
+  <img src="assets/flow-light.png" alt="The reader keeps entrypoints and config and drops vendored files before chunking for the model">
+</picture>
 
 The reader and the chunker are the project. Everything else is plumbing around that decision.
 
